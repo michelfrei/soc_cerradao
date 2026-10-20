@@ -1,0 +1,15 @@
+api.http.host: "127.0.0.1"
+api.http.port: 9600
+path.data: /usr/share/logstash/data
+
+# Fila persistente: eventos lidos do PostgreSQL sobrevivem a reinícios do container.
+queue.type: persisted
+queue.max_bytes: 2gb
+queue.checkpoint.writes: 1024
+
+# Documentos recusados pelo Elasticsearch (erros de mapeamento) ficam guardados para reprocessamento.
+dead_letter_queue.enable: true
+dead_letter_queue.max_bytes: 1gb
+
+xpack.monitoring.enabled: false
+log.format: json

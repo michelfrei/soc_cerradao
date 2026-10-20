@@ -1,0 +1,100 @@
+{
+  "template": {
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "tags": { "type": "keyword" },
+        "event": {
+          "properties": {
+            "kind": { "type": "keyword" },
+            "module": { "type": "keyword" },
+            "dataset": { "type": "keyword" },
+            "action": { "type": "keyword" },
+            "outcome": { "type": "keyword" },
+            "reason": { "type": "keyword", "ignore_above": 1024 },
+            "severity_name": { "type": "keyword" }
+          }
+        },
+        "host": {
+          "properties": {
+            "name": { "type": "keyword" },
+            "id": { "type": "keyword" }
+          }
+        },
+        "user": {
+          "properties": {
+            "name": { "type": "keyword" },
+            "domain": { "type": "keyword" },
+            "id": { "type": "keyword" }
+          }
+        },
+        "source": {
+          "properties": {
+            "ip": { "type": "ip", "ignore_malformed": true },
+            "domain": { "type": "keyword" },
+            "port": { "type": "long", "ignore_malformed": true }
+          }
+        },
+        "process": {
+          "properties": {
+            "name": { "type": "keyword" },
+            "pid": { "type": "long", "ignore_malformed": true },
+            "command_line": { "type": "wildcard" },
+            "user": { "properties": { "name": { "type": "keyword" } } },
+            "parent": { "properties": { "name": { "type": "keyword" } } }
+          }
+        },
+        "file": {
+          "properties": {
+            "name": { "type": "keyword" },
+            "path": { "type": "keyword", "ignore_above": 4096 },
+            "hash": { "properties": { "sha256": { "type": "keyword" } } }
+          }
+        },
+        "winlog": {
+          "properties": {
+            "logon": {
+              "properties": {
+                "type": { "type": "keyword" },
+                "id": { "type": "keyword" }
+              }
+            }
+          }
+        },
+        "soc": {
+          "properties": {
+            "entity": { "type": "keyword" },
+            "dataset": { "type": "keyword" },
+            "publication_id": { "type": "long" },
+            "txid": { "type": "long" },
+            "logon": { "properties": { "protocol": { "type": "keyword" } } },
+            "object": {
+              "properties": {
+                "id": { "type": "keyword" },
+                "title": { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 1024 } } },
+                "status": { "type": "keyword" },
+                "severity": { "type": "keyword" },
+                "classification": { "type": "keyword" },
+                "determination": { "type": "keyword" },
+                "assigned_to": { "type": "keyword" },
+                "service_source": { "type": "keyword" },
+                "incident_id": { "type": "keyword" },
+                "url": { "type": "keyword", "index": false },
+                "created": { "type": "date" }
+              }
+            }
+          }
+        },
+        "defender": {
+          "type": "flattened",
+          "depth_limit": 20,
+          "ignore_above": 4096
+        }
+      }
+    }
+  },
+  "_meta": {
+    "description": "Mapeamento ECS parcial do SOC; o registro original fica em defender (flattened)."
+  }
+}

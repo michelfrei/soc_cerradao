@@ -1,0 +1,9 @@
+{
+  "policy": {
+    "_meta": { "description": "Eventos pesquisáveis por cerca de 90 dias (índices mensais; idade contada da criação do índice)." },
+    "phases": {
+      "hot": { "min_age": "0ms", "actions": {} },
+      "delete": { "min_age": "120d", "actions": { "delete": {} } }
+    }
+  }
+}

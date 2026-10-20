@@ -1,0 +1,13 @@
+{
+  "index_patterns": ["soc-incident-history-*", "soc-alert-history-*", "soc-unknown-*"],
+  "priority": 200,
+  "composed_of": ["soc-mappings"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "30s",
+      "index.lifecycle.name": "soc-history-retention"
+    }
+  }
+}

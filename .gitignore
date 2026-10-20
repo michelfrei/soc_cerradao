@@ -1,0 +1,19 @@
+# Dependências e build
+node_modules/
+dist/
+coverage/
+
+# Segredos: nunca versionar
+.env
+docker/.env
+docker/secrets/*
+!docker/secrets/.gitkeep
+*.pem
+*.key
+*.pfx
+*.p12
+
+# Diversos
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,4 @@
+- pipeline.id: soc-publication
+  path.config: "/usr/share/logstash/pipeline/soc-publication.conf"
+  pipeline.workers: 2
+  pipeline.batch.size: 500

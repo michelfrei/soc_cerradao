@@ -1,0 +1,50 @@
+{
+  "sources": [
+    {
+      "name": "incidents",
+      "type": "incidents",
+      "enabled": true,
+      "intervalSeconds": 300,
+      "overlapMinutes": 30,
+      "initialLookbackHours": 168
+    },
+    {
+      "name": "alerts",
+      "type": "alerts",
+      "enabled": true,
+      "intervalSeconds": 300,
+      "overlapMinutes": 30,
+      "initialLookbackHours": 168
+    },
+    {
+      "name": "hunting.devicelogonevents",
+      "type": "hunting",
+      "table": "DeviceLogonEvents",
+      "queryFile": "devicelogonevents.kql",
+      "enabled": false,
+      "intervalSeconds": 300,
+      "overlapMinutes": 15,
+      "ingestionLagMinutes": 5,
+      "initialLookbackHours": 24,
+      "maxWindowMinutes": 60,
+      "minWindowMinutes": 1,
+      "maxRows": 30000,
+      "maxWindowsPerRun": 24
+    },
+    {
+      "name": "hunting.asr",
+      "type": "hunting",
+      "table": "DeviceEvents",
+      "queryFile": "asr.kql",
+      "enabled": false,
+      "intervalSeconds": 300,
+      "overlapMinutes": 15,
+      "ingestionLagMinutes": 5,
+      "initialLookbackHours": 24,
+      "maxWindowMinutes": 360,
+      "minWindowMinutes": 1,
+      "maxRows": 30000,
+      "maxWindowsPerRun": 8
+    }
+  ]
+}

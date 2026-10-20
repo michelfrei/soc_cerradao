@@ -1,0 +1,6 @@
+// Autenticações nos dispositivos (Frente 1 e Frente 4).
+// {{start}} e {{end}} são preenchidos pelo coletor em UTC; o fim é exclusivo.
+// Para o piloto, restrinja aos servidores escolhidos descomentando a linha abaixo.
+DeviceLogonEvents
+| where Timestamp >= datetime({{start}}) and Timestamp < datetime({{end}})
+// | where DeviceName in~ ("srv01.dominio.local", "srv02.dominio.local")

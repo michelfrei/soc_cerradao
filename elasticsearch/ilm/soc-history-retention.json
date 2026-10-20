@@ -1,0 +1,9 @@
+{
+  "policy": {
+    "_meta": { "description": "Histórico de versões de incidentes e alertas por cerca de 12 meses." },
+    "phases": {
+      "hot": { "min_age": "0ms", "actions": {} },
+      "delete": { "min_age": "395d", "actions": { "delete": {} } }
+    }
+  }
+}

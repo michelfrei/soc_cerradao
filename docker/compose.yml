@@ -1,0 +1,197 @@
+# SOC — VM do Docker: Elasticsearch, Kibana, Logstash e coletor.
+# O PostgreSQL roda em VM própria (ver postgres/).
+# Uso: cd docker && docker compose up -d --build   (detalhes em docs/RUNBOOK.md)
+name: soc
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION:?defina STACK_VERSION no .env}
+    user: "0"
+    command: ["bash", "/setup/setup.sh"]
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:?}
+      KIBANA_PASSWORD: ${KIBANA_PASSWORD:?}
+      SOC_ES_LOGSTASH_USER: ${SOC_ES_LOGSTASH_USER:-soc_logstash}
+      SOC_ES_LOGSTASH_PASSWORD: ${SOC_ES_LOGSTASH_PASSWORD:?}
+      SOC_PUBLIC_DNS: ${SOC_PUBLIC_DNS:-}
+      SOC_PUBLIC_IP: ${SOC_PUBLIC_IP:-}
+    volumes:
+      - certs:/usr/share/elasticsearch/config/certs
+      - ca_private:/usr/share/elasticsearch/config/ca-private
+      - ../elasticsearch:/setup:ro
+    healthcheck:
+      test: ["CMD-SHELL", "[ -f /usr/share/elasticsearch/config/certs/es01/es01.crt ]"]
+      interval: 2s
+      timeout: 5s
+      retries: 120
+    logging: *logging
+
+  es01:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    depends_on:
+      setup:
+        condition: service_healthy
+    environment:
+      node.name: es01
+      cluster.name: soc
+      discovery.type: single-node
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+      bootstrap.memory_lock: "true"
+      ES_JAVA_OPTS: -Xms${ES_HEAP:-4g} -Xmx${ES_HEAP:-4g}
+      path.repo: /usr/share/elasticsearch/snapshots
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "true"
+      xpack.security.http.ssl.key: certs/es01/es01.key
+      xpack.security.http.ssl.certificate: certs/es01/es01.crt
+      xpack.security.http.ssl.certificate_authorities: certs/ca/ca.crt
+      xpack.security.transport.ssl.enabled: "true"
+      xpack.security.transport.ssl.key: certs/es01/es01.key
+      xpack.security.transport.ssl.certificate: certs/es01/es01.crt
+      xpack.security.transport.ssl.certificate_authorities: certs/ca/ca.crt
+      xpack.security.transport.ssl.verification_mode: certificate
+      xpack.license.self_generated.type: ${ES_LICENSE:-basic}
+    volumes:
+      - certs:/usr/share/elasticsearch/config/certs:ro
+      - ${ES_DATA_DIR:-/srv/soc/esdata}:/usr/share/elasticsearch/data
+      - ${ES_SNAPSHOT_DIR:-/srv/soc/es-snapshots}:/usr/share/elasticsearch/snapshots
+    ports:
+      # Por padrão só na própria VM; mude ES_BIND para expor na rede.
+      - ${ES_BIND:-127.0.0.1}:9200:9200
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65535, hard: 65535 }
+    mem_limit: ${ES_MEM_LIMIT:-8g}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s --cacert config/certs/ca/ca.crt https://localhost:9200 | grep -q 'missing authentication credentials'"]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+    logging: *logging
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+    depends_on:
+      es01:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+    environment:
+      SERVERNAME: kibana
+      SERVER_PUBLICBASEURL: ${KIBANA_PUBLIC_URL:?defina KIBANA_PUBLIC_URL no .env}
+      SERVER_SSL_ENABLED: "true"
+      SERVER_SSL_CERTIFICATE: config/certs/kibana/kibana.crt
+      SERVER_SSL_KEY: config/certs/kibana/kibana.key
+      ELASTICSEARCH_HOSTS: https://es01:9200
+      ELASTICSEARCH_USERNAME: kibana_system
+      ELASTICSEARCH_PASSWORD: ${KIBANA_PASSWORD}
+      ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES: config/certs/ca/ca.crt
+      # Obrigatórias para regras de detecção, alertas e Cases.
+      XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: ${KIBANA_ENCRYPTION_KEY:?}
+      XPACK_SECURITY_ENCRYPTIONKEY: ${KIBANA_SECURITY_KEY:?}
+      XPACK_REPORTING_ENCRYPTIONKEY: ${KIBANA_REPORTING_KEY:?}
+      TELEMETRY_OPTIN: "false"
+    volumes:
+      - certs:/usr/share/kibana/config/certs:ro
+      - kibana_data:/usr/share/kibana/data
+    ports:
+      - ${KIBANA_BIND:-0.0.0.0}:5601:5601
+    mem_limit: ${KIBANA_MEM_LIMIT:-2g}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -I --cacert config/certs/ca/ca.crt https://localhost:5601 | grep -q 'HTTP/1.1 302 Found'"]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+    logging: *logging
+
+  logstash:
+    build:
+      context: ../logstash
+      args:
+        STACK_VERSION: ${STACK_VERSION}
+    image: soc/logstash:${STACK_VERSION}
+    depends_on:
+      es01:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+    environment:
+      LS_JAVA_OPTS: -Xms${LS_HEAP:-1g} -Xmx${LS_HEAP:-1g}
+      SOC_PG_HOST: ${SOC_PG_HOST:?defina SOC_PG_HOST no .env}
+      SOC_PG_PORT: ${SOC_PG_PORT:-5432}
+      SOC_PG_SSLMODE: ${SOC_PG_SSLMODE:-require}
+      SOC_LOGSTASH_DB_USER: soc_logstash
+      SOC_LOGSTASH_DB_PASSWORD: ${SOC_LOGSTASH_DB_PASSWORD:?}
+      SOC_ES_HOSTS: https://es01:9200
+      SOC_ES_LOGSTASH_USER: ${SOC_ES_LOGSTASH_USER:-soc_logstash}
+      SOC_ES_LOGSTASH_PASSWORD: ${SOC_ES_LOGSTASH_PASSWORD}
+    volumes:
+      - certs:/usr/share/logstash/certs:ro
+      - ../logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+      - ../logstash/config/pipelines.yml:/usr/share/logstash/config/pipelines.yml:ro
+      - ../logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ../logstash/sql:/usr/share/logstash/sql:ro
+      - ${LS_DATA_DIR:-/srv/soc/logstash-data}:/usr/share/logstash/data
+    mem_limit: ${LS_MEM_LIMIT:-2g}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9600/ >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+    logging: *logging
+
+  collector:
+    build:
+      context: ../collector
+    image: soc/collector:${COLLECTOR_VERSION:-0.1.0}
+    environment:
+      GRAPH_TENANT_ID: ${GRAPH_TENANT_ID:?defina GRAPH_TENANT_ID no .env}
+      GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID:?defina GRAPH_CLIENT_ID no .env}
+      GRAPH_CLIENT_SECRET_FILE: /run/secrets/graph_client_secret
+      GRAPH_MAX_CONCURRENCY: ${GRAPH_MAX_CONCURRENCY:-2}
+      PGHOST: ${SOC_PG_HOST}
+      PGPORT: ${SOC_PG_PORT:-5432}
+      PGDATABASE: soc
+      PGUSER: soc_collector
+      PGPASSWORD_FILE: /run/secrets/pg_collector_password
+      PGSSLMODE: ${SOC_PG_SSLMODE:-require}
+      LOG_LEVEL: ${COLLECTOR_LOG_LEVEL:-info}
+      # Proxy corporativo, se houver (Node 24 lê HTTPS_PROXY com NODE_USE_ENV_PROXY=1).
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
+      NODE_USE_ENV_PROXY: ${NODE_USE_ENV_PROXY:-0}
+    secrets:
+      - graph_client_secret
+      - pg_collector_password
+    volumes:
+      # Fontes e consultas podem ser ajustadas sem rebuild (reinicie o container).
+      - ../collector/config:/app/config:ro
+      - ../collector/queries:/app/queries:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${COLLECTOR_MEM_LIMIT:-512m}
+    restart: unless-stopped
+    logging: *logging
+
+secrets:
+  graph_client_secret:
+    file: ./secrets/graph_client_secret
+  pg_collector_password:
+    file: ./secrets/pg_collector_password
+
+volumes:
+  certs:
+  ca_private:
+  kibana_data:

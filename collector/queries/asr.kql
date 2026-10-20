@@ -1,0 +1,6 @@
+// Eventos de regras ASR (Frente 3): auditoria e bloqueio.
+// O Advanced Hunting registra eventos ASR amostrados (processo único por hora);
+// trate as contagens como "eventos observados", não como total de tentativas.
+DeviceEvents
+| where Timestamp >= datetime({{start}}) and Timestamp < datetime({{end}})
+| where ActionType startswith "Asr"

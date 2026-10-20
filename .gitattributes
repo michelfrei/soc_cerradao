@@ -1,0 +1,5 @@
+# Scripts e configurações rodam em Linux: mantenha LF mesmo com checkout no Windows.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.jar binary
