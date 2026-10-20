@@ -105,7 +105,8 @@ services:
     mem_limit: ${KIBANA_MEM_LIMIT:-2g}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -s -I --cacert config/certs/ca/ca.crt https://localhost:5601 | grep -q 'HTTP/1.1 302 Found'"]
+      # Kibana responde por HTTP/2 com TLS: aceita 200 ou 302 (redireciona ao login).
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' --cacert config/certs/ca/ca.crt https://localhost:5601 | grep -Eq '^(200|302)$'"]
       interval: 10s
       timeout: 10s
       retries: 120

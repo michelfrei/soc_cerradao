@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Validação local do projeto SOC com Docker Desktop (não acessa Microsoft nem as VMs).
 
@@ -117,7 +117,12 @@ GRAPH_CLIENT_ID=00000000-0000-0000-0000-000000000000
     }
 
     Invoke-Step 'Logstash: sintaxe do pipeline' {
+        # O teste só confere se o caminho da CA existe; um arquivo fictício basta.
+        $fakeCerts = Join-Path $env:TEMP 'soc-validate-certs'
+        New-Item -ItemType Directory -Force "$fakeCerts\ca" | Out-Null
+        Set-Content "$fakeCerts\ca\ca.crt" 'placeholder'
         docker run --rm `
+            -v "${fakeCerts}:/usr/share/logstash/certs:ro" `
             -v "${root}\logstash\pipeline:/usr/share/logstash/pipeline:ro" `
             -v "${root}\logstash\sql:/usr/share/logstash/sql:ro" `
             -e SOC_PG_HOST=x -e SOC_PG_PORT=5432 -e SOC_PG_SSLMODE=require `

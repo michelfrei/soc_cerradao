@@ -100,7 +100,12 @@ function readSecretFile(path: string, label: string): string {
   try {
     value = readFileSync(path, 'utf8').trim();
   } catch (err) {
-    throw new Error(`não foi possível ler ${label} em ${path}: ${(err as Error).message}`);
+    const code = (err as NodeJS.ErrnoException).code;
+    const hint =
+      code === 'EISDIR'
+        ? ' (o Docker cria um diretório quando o arquivo de origem não existe: apague o diretório em docker/secrets, crie o arquivo e recrie o container)'
+        : '';
+    throw new Error(`não foi possível ler ${label} em ${path}: ${(err as Error).message}${hint}`);
   }
   if (!value) throw new Error(`${label} em ${path} está vazio`);
   return value;
