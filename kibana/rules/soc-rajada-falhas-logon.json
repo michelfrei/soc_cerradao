@@ -53,16 +53,16 @@
   ],
   "references": [],
   "max_signals": 100,
-  "version": 1,
+  "version": 2,
   "actions": [],
   "exceptions_list": [],
-  "note": "## Triagem\n- Verifique event.reason (FailureReason) e source.ip.\n- Muitas origens ou muitas contas no mesmo servidor sugerem spraying; uma origem fixa com senha errada sugere credencial antiga.\n- Procure logon bem-sucedido posterior (regra soc-forca-bruta-sucesso).\n- Eventos agregados contam como 1 documento; a contagem real pode ser maior.",
+  "note": "## Triagem\n- Verifique event.reason (FailureReason) e source.ip.\n- Muitas origens ou muitas contas no mesmo servidor sugerem spraying; uma origem fixa com senha errada sugere credencial antiga.\n- Procure logon bem-sucedido posterior (regra soc-forca-bruta-sucesso).\n- Eventos agregados contam como 1 documento; a contagem real pode ser maior.\n- Correlação: use soc.identity.correlation_key e host.id; soc.identity.key/SID permanecem no detalhe. Contas homônimas de domínios ou servidores diferentes não devem ser mescladas.",
   "language": "kuery",
-  "query": "event.dataset : \"defender.devicelogonevents\" and event.outcome : \"failure\" and user.name : * and not user.name : *$ and not winlog.logon.type : (\"Service\" or \"Batch\")",
+  "query": "(event.dataset : \"defender.devicelogonevents\" and event.outcome : \"failure\" and soc.identity.correlation_key : * and not user.name : *$ and not winlog.logon.type : (\"Service\" or \"Batch\")) and host.id : * and (host.name : (*srv* or *fisico*) and not host.name : (*note* or *micro*))",
   "threshold": {
     "field": [
-      "host.name",
-      "user.name"
+      "host.id",
+      "soc.identity.correlation_key"
     ],
     "value": 10
   }

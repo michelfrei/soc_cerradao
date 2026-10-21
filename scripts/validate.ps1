@@ -4,11 +4,11 @@
 
 .DESCRIPTION
   1. Sobe um PostgreSQL 18 temporário e aplica bootstrap.sql e as migrações.
-  2. Instala dependências do coletor, gera o package-lock.json, checa tipos e roda
+  2. Instala dependências pelo package-lock.json versionado, checa tipos e roda
      os testes unitários e de integração (inclui o teste de ordem de commit).
   3. Valida o docker compose (com valores fictícios), a sintaxe do pipeline do
      Logstash e os scripts shell (bash -n e shellcheck).
-  Tudo é removido ao final, exceto o package-lock.json gerado.
+  Banco e dependências temporárias são removidos ao final; o build local permanece.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\validate.ps1
@@ -89,7 +89,7 @@ try {
         docker run --rm --network $net `
             -v "${root}\collector:/app" -v soc-validate-node-modules:/app/node_modules -w /app `
             -e SOC_TEST_PG_HOST=$pg -e SOC_TEST_COLLECTOR_PASSWORD=$collectorPw -e SOC_TEST_LOGSTASH_PASSWORD=$logstashPw `
-            $NodeImage sh -c 'npm install --no-audit --no-fund && npm run typecheck && npm test && npm run build'
+            $NodeImage sh -c 'npm ci --no-audit --no-fund && npm run typecheck && npm test && npm run build'
     }
 
     Invoke-Step 'Docker Compose: configuração' {
@@ -130,6 +130,7 @@ GRAPH_CLIENT_ID=00000000-0000-0000-0000-000000000000
             -v "${fakeCerts}:/usr/share/logstash/certs:ro" `
             -v "${root}\logstash\pipeline:/usr/share/logstash/pipeline:ro" `
             -v "${root}\logstash\sql:/usr/share/logstash/sql:ro" `
+            -v "${root}\logstash\config\identities.json:/usr/share/logstash/config/identities.json:ro" `
             -e SOC_PG_HOST=x -e SOC_PG_PORT=5432 -e SOC_PG_SSLMODE=require `
             -e SOC_LOGSTASH_DB_USER=x -e SOC_LOGSTASH_DB_PASSWORD=x `
             -e SOC_ES_HOSTS=https://es01:9200 -e SOC_ES_LOGSTASH_USER=x -e SOC_ES_LOGSTASH_PASSWORD=x `
@@ -139,12 +140,14 @@ GRAPH_CLIENT_ID=00000000-0000-0000-0000-000000000000
 
     Invoke-Step 'Scripts shell: sintaxe e shellcheck' {
         docker run --rm -v "${root}:/src:ro" -w /src koalaman/shellcheck:v0.10.0 `
-            -S warning postgres/setup-postgres.sh postgres/migrate.sh elasticsearch/setup.sh docker/host/prepare-docker-host.sh kibana/setup.sh
+            -S warning postgres/setup-postgres.sh postgres/migrate.sh postgres/configure-tls.sh elasticsearch/setup.sh docker/host/prepare-docker-host.sh kibana/setup.sh scripts/capacity-report.sh
     }
 
     Invoke-Step 'Kibana: pacote de dashboards e regras atualizado' {
         # Falha se kibana/dist não corresponder a kibana/build.mjs e kibana/rules.
         docker run --rm -v "${root}:/repo:ro" -w /repo $NodeImage node kibana/build.mjs --check
+        if ($LASTEXITCODE -ne 0) { throw 'pacote Kibana desatualizado' }
+        docker run --rm -v "${root}:/repo:ro" -w /repo $NodeImage node --test kibana/test/package.test.mjs
     }
 }
 finally {

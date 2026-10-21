@@ -1,0 +1,11 @@
+{
+  "description": "Observador SOC: dashboards somente leitura; equivalente funcional a soc_reader.",
+  "elasticsearch": {
+    "cluster": [],
+    "indices": [
+      { "names": ["soc-*"], "privileges": ["read", "view_index_metadata"] },
+      { "names": [".alerts-security.alerts-soc", ".internal.alerts-security.alerts-soc-*"], "privileges": ["read", "view_index_metadata"] }
+    ]
+  },
+  "kibana": [{ "base": [], "spaces": ["soc"], "feature": { "dashboard_v2": ["read"] } }]
+}

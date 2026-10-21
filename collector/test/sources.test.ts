@@ -110,7 +110,7 @@ describe('parseSources', () => {
     const raw: unknown = JSON.parse(readFileSync(new URL('../config/sources.json', import.meta.url), 'utf8'));
     const sources = parseSources(raw, (f) => readFileSync(new URL(`../queries/${f}`, import.meta.url), 'utf8'));
     expect(sources.map((s) => s.name)).toEqual([
-      'incidents', 'alerts', 'hunting.devicelogonevents', 'hunting.asr', 'reconcile.devicelogonevents', 'reconcile.asr',
+      'inventory.deviceinfo', 'incidents', 'alerts', 'hunting.devicelogonevents', 'hunting.asr', 'reconcile.devicelogonevents', 'reconcile.asr',
     ]);
   });
 

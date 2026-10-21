@@ -81,12 +81,12 @@
   ],
   "references": [],
   "max_signals": 100,
-  "version": 1,
+  "version": 2,
   "actions": [],
   "exceptions_list": [],
-  "note": "## Triagem\n- Veja process.command_line, process.parent.name e o arquivo executado.\n- Correlacione com logons de rede no mesmo host.name minutos antes (quem e de onde).\n- Ferramenta de gestão conhecida e recorrente: criar exceção por process.name/linha de comando.",
+  "note": "## Triagem\n- Veja process.command_line, process.parent.name e o arquivo executado.\n- Correlacione com logons de rede no mesmo host.name minutos antes (quem e de onde).\n- Ferramenta de gestão conhecida e recorrente: criar exceção por process.name/linha de comando.\n- Correlação: use soc.identity.correlation_key e host.id; soc.identity.key/SID permanecem no detalhe. Contas homônimas de domínios ou servidores diferentes não devem ser mescladas.",
   "language": "kuery",
-  "query": "event.dataset : \"defender.deviceevents\" and soc.asr.rule : \"PsexecWmiChildProcess\"",
+  "query": "(event.dataset : \"defender.deviceevents\" and soc.asr.rule : \"PsexecWmiChildProcess\") and host.id : * and (host.name : (*srv* or *fisico*) and not host.name : (*note* or *micro*))",
   "timestamp_override": "event.ingested",
   "timestamp_override_fallback_disabled": false
 }

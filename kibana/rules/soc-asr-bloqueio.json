@@ -39,12 +39,12 @@
   ],
   "references": [],
   "max_signals": 100,
-  "version": 1,
+  "version": 2,
   "actions": [],
   "exceptions_list": [],
-  "note": "## Triagem\n- Veja soc.asr.rule, file.path/file.name e process.command_line/process.parent.name.\n- Confirme se o processo é legítimo (fornecedor, assinatura, hash em file.hash.sha256).\n- Bloqueio recorrente de aplicação legítima: avaliar exclusão no Defender (fora do escopo desta regra) ou exceção aqui.",
+  "note": "## Triagem\n- Veja soc.asr.rule, file.path/file.name e process.command_line/process.parent.name.\n- Confirme se o processo é legítimo (fornecedor, assinatura, hash em file.hash.sha256).\n- Bloqueio recorrente de aplicação legítima: avaliar exclusão no Defender (fora do escopo desta regra) ou exceção aqui.\n- Correlação: use soc.identity.correlation_key e host.id; soc.identity.key/SID permanecem no detalhe. Contas homônimas de domínios ou servidores diferentes não devem ser mescladas.",
   "language": "kuery",
-  "query": "event.dataset : \"defender.deviceevents\" and soc.asr.mode : \"block\" and not soc.asr.rule : (\"LsassCredentialTheft\" or \"PsexecWmiChildProcess\")",
+  "query": "(event.dataset : \"defender.deviceevents\" and soc.asr.mode : \"block\" and not soc.asr.rule : (\"LsassCredentialTheft\" or \"PsexecWmiChildProcess\")) and host.id : * and (host.name : (*srv* or *fisico*) and not host.name : (*note* or *micro*))",
   "timestamp_override": "event.ingested",
   "timestamp_override_fallback_disabled": false
 }

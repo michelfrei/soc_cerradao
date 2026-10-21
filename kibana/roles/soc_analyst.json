@@ -1,0 +1,16 @@
+{
+  "description": "Analista SOC: investiga dados, faz triagem de alertas e gerencia Cases no espaco SOC. Nao edita regras.",
+  "elasticsearch": {
+    "cluster": [],
+    "indices": [
+      { "names": ["soc-*"], "privileges": ["read", "view_index_metadata"] },
+      { "names": [".alerts-security.alerts-soc", ".internal.alerts-security.alerts-soc-*"], "privileges": ["maintenance", "write", "read", "view_index_metadata"] },
+      { "names": [".lists-soc", ".items-soc"], "privileges": ["read", "view_index_metadata"] }
+    ]
+  },
+  "kibana": [{ "base": [], "spaces": ["soc"], "feature": {
+    "dashboard_v2": ["read"], "discover_v2": ["read"], "siemV5": ["read"],
+    "securitySolutionRulesV4": ["read"], "securitySolutionAlertsV1": ["all"],
+    "securitySolutionCasesV3": ["all"]
+  } }]
+}

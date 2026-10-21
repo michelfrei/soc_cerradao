@@ -81,14 +81,14 @@
   ],
   "references": [],
   "max_signals": 100,
-  "version": 1,
+  "version": 2,
   "actions": [],
   "exceptions_list": [],
-  "note": "## Triagem\n- Verifique quem é o usuário (user.name/user.domain) e se a origem (source.ip) é estação conhecida da TI.\n- Busque outros logons do mesmo source.ip em soc-events-* (+/- 2 h) e falhas anteriores.\n- Confirme com o usuário/gestor se o acesso era esperado.",
+  "note": "## Triagem\n- Verifique quem é o usuário (user.name/user.domain) e se a origem (source.ip) é estação conhecida da TI.\n- Busque outros logons do mesmo source.ip em soc-events-* (+/- 2 h) e falhas anteriores.\n- Confirme com o usuário/gestor se o acesso era esperado.\n- Correlação: use soc.identity.correlation_key e host.id; soc.identity.key/SID permanecem no detalhe. Contas homônimas de domínios ou servidores diferentes não devem ser mescladas.",
   "language": "kuery",
-  "query": "event.dataset : \"defender.devicelogonevents\" and event.outcome : \"success\" and winlog.logon.type : \"RemoteInteractive\" and source.ip : * and not source.ip : (\"127.0.0.1\" or \"::1\") and not user.name : *$",
+  "query": "(event.dataset : \"defender.devicelogonevents\" and event.outcome : \"success\" and winlog.logon.type : \"RemoteInteractive\" and source.ip : * and not source.ip : (\"127.0.0.1\" or \"::1\") and not user.name : *$) and host.id : * and (host.name : (*srv* or *fisico*) and not host.name : (*note* or *micro*)) and soc.identity.correlation_key : *",
   "new_terms_fields": [
-    "host.name",
+    "host.id",
     "source.ip"
   ],
   "history_window_start": "now-14d",

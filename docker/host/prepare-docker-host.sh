@@ -38,10 +38,10 @@ docker compose version >/dev/null 2>&1 || die "plugin docker compose não encont
 
 # vm.max_map_count: mínimo exigido pelo Elasticsearch.
 current="$(sysctl -n vm.max_map_count)"
-if (( current < 262144 )); then
-    echo "vm.max_map_count=262144" > /etc/sysctl.d/99-soc-elasticsearch.conf
+if (( current < 1048576 )); then
+    echo "vm.max_map_count=1048576" > /etc/sysctl.d/99-soc-elasticsearch.conf
     sysctl -q -p /etc/sysctl.d/99-soc-elasticsearch.conf
-    echo "vm.max_map_count ajustado para 262144"
+    echo "vm.max_map_count ajustado para 1048576"
 else
     echo "vm.max_map_count já é ${current}"
 fi
@@ -91,6 +91,6 @@ echo "Exposição: KIBANA_BIND=$(env_value KIBANA_BIND 0.0.0.0) ES_BIND=$(env_va
 echo "Docker habilitado no boot: $(systemctl is-enabled docker 2>/dev/null || echo desconhecido)"
 
 mem_mb=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1024 ))
-echo "RAM da VM: ${mem_mb} MB (recomendado >= 12288 MB para o piloto)"
+echo "RAM da VM: ${mem_mb} MB (referência inicial: 16 GB; limites padrão dos serviços somam 12,5 GiB)"
 echo "Lembrete: desative a memória dinâmica desta VM no Hyper-V."
 echo "Preparação concluída."

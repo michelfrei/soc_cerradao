@@ -89,3 +89,31 @@ local é feita apenas na apresentação (Kibana/Grafana).
 Decisão do projeto. O coletor e o Logstash conectam com `sslmode=require`
 (certificado autoassinado do Ubuntu). Para `verify-full`, emita um certificado
 para a VM-PG e configure `PGSSLROOTCERT_FILE` no coletor e `sslrootcert` no Logstash.
+
+A evolução oferece `postgres/configure-tls.sh` e mounts da CA nos dois
+consumidores. O padrão `require` é preservado para instalações existentes;
+ative `verify-full` seguindo `DEPLOY-EVOLUCAO.md`, sem fallback automático.
+
+## D9 — Escopo de nomes e inventário
+
+Hunting/inventário incluem `srv` ou `fisico`, excluindo sempre `note` ou `micro`,
+sem distinção de caixa. O catálogo esperado não é uma allowlist de coleta.
+DeviceInfo fornece estado conhecido dos últimos 30 dias; lista esperada vazia
+significa cobertura total desconhecida. `SOCObserved` não é heartbeat online.
+O estado atual fica em `soc.device_inventory` e `soc-devices`.
+
+## D10 — Identidade e correlação
+
+SID é evidência da identidade principal. As regras usam uma chave de correlação
+de domínio+conta ou host+conta local/sem domínio, pois falhas podem não conter SID.
+Ausência de SID/domínio não autoriza unir nomes iguais entre servidores.
+Classificação pessoa/serviço só é preenchida por catálogo explícito; sufixo `$`
+e autoridades conhecidas permitem classificar máquina/sistema.
+
+## D11 — Métricas operacionais
+
+JDBC de telemetria é independente do cursor xid8 da publicação. Snapshots por
+minuto usam IDs por fonte/minuto. Gauges usam última amostra, nunca soma de
+snapshots. Tamanho das relações PostgreSQL é medido sem varrer eventos; capacidade
+do ES vem de `_nodes/_local/stats` autenticado com o usuário monitor do Logstash.
+Os dados não representam CPU/RAM das VMs nem dos endpoints monitorados.

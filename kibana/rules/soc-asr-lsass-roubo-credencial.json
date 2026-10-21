@@ -54,12 +54,12 @@
   ],
   "references": [],
   "max_signals": 100,
-  "version": 1,
+  "version": 2,
   "actions": [],
   "exceptions_list": [],
-  "note": "## Triagem\n- Identifique o processo iniciador (process.name, process.command_line, process.parent.name, file.hash.sha256).\n- Processo desconhecido, em pasta de usuário/temporária ou com linha de comando de dump: tratar como incidente.\n- Verifique logons recentes no host (quem estava conectado) e alertas em soc-alerts.",
+  "note": "## Triagem\n- Identifique o processo iniciador (process.name, process.command_line, process.parent.name, file.hash.sha256).\n- Processo desconhecido, em pasta de usuário/temporária ou com linha de comando de dump: tratar como incidente.\n- Verifique logons recentes no host (quem estava conectado) e alertas em soc-alerts.\n- Correlação: use soc.identity.correlation_key e host.id; soc.identity.key/SID permanecem no detalhe. Contas homônimas de domínios ou servidores diferentes não devem ser mescladas.",
   "language": "kuery",
-  "query": "event.dataset : \"defender.deviceevents\" and soc.asr.rule : \"LsassCredentialTheft\"",
+  "query": "(event.dataset : \"defender.deviceevents\" and soc.asr.rule : \"LsassCredentialTheft\") and host.id : * and (host.name : (*srv* or *fisico*) and not host.name : (*note* or *micro*))",
   "timestamp_override": "event.ingested",
   "timestamp_override_fallback_disabled": false
 }

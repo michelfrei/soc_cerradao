@@ -1,0 +1,5 @@
+{
+  "accounts": [
+    {"domain":"example", "name":"catalogued-service", "type":"service", "privileged":false}
+  ]
+}

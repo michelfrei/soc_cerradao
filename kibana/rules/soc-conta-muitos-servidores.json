@@ -85,20 +85,20 @@
   ],
   "references": [],
   "max_signals": 100,
-  "version": 1,
+  "version": 2,
   "actions": [],
   "exceptions_list": [],
-  "note": "## Triagem\n- Liste os host.name e source.ip envolvidos (Investigar em linha do tempo).\n- Verifique se a conta é de serviço conhecida; se for, crie exceção por user.name.\n- Logons a partir de uma única origem incomum em sequência rápida aumentam a suspeita.",
+  "note": "## Triagem\n- Liste os host.name e source.ip envolvidos (Investigar em linha do tempo).\n- Verifique se a conta é de serviço conhecida; se for, crie exceção por user.name.\n- Logons a partir de uma única origem incomum em sequência rápida aumentam a suspeita.\n- Correlação: use soc.identity.correlation_key e host.id; soc.identity.key/SID permanecem no detalhe. Contas homônimas de domínios ou servidores diferentes não devem ser mescladas.",
   "language": "kuery",
-  "query": "event.dataset : \"defender.devicelogonevents\" and event.outcome : \"success\" and winlog.logon.type : (\"Network\" or \"RemoteInteractive\") and user.name : * and not user.name : *$ and not user.domain : (\"NT AUTHORITY\" or \"nt authority\") and not user.name : (\"ANONYMOUS LOGON\" or \"anonymous logon\")",
+  "query": "(event.dataset : \"defender.devicelogonevents\" and event.outcome : \"success\" and winlog.logon.type : (\"Network\" or \"RemoteInteractive\") and soc.identity.correlation_key : * and not user.name : *$ and not user.domain : (\"NT AUTHORITY\" or \"nt authority\") and not user.name : (\"ANONYMOUS LOGON\" or \"anonymous logon\")) and host.id : * and (host.name : (*srv* or *fisico*) and not host.name : (*note* or *micro*))",
   "threshold": {
     "field": [
-      "user.name"
+      "soc.identity.correlation_key"
     ],
     "value": 5,
     "cardinality": [
       {
-        "field": "host.name",
+        "field": "host.id",
         "value": 5
       }
     ]

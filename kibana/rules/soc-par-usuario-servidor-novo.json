@@ -85,15 +85,15 @@
   ],
   "references": [],
   "max_signals": 100,
-  "version": 1,
+  "version": 2,
   "actions": [],
   "exceptions_list": [],
-  "note": "## Triagem\n- Confirme se o usuário tem função que justifica o acesso ao servidor.\n- Verifique a origem (source.ip) e o tipo de logon.\n- Se for conta administrativa nova no servidor, cruze com chamados/mudanças.",
+  "note": "## Triagem\n- Confirme se o usuário tem função que justifica o acesso ao servidor.\n- Verifique a origem (source.ip) e o tipo de logon.\n- Se for conta administrativa nova no servidor, cruze com chamados/mudanças.\n- Correlação: use soc.identity.correlation_key e host.id; soc.identity.key/SID permanecem no detalhe. Contas homônimas de domínios ou servidores diferentes não devem ser mescladas.",
   "language": "kuery",
-  "query": "event.dataset : \"defender.devicelogonevents\" and event.outcome : \"success\" and winlog.logon.type : (\"Interactive\" or \"RemoteInteractive\" or \"CachedInteractive\") and user.name : * and not user.name : *$ and not user.domain : (\"Window Manager\" or \"Font Driver Host\")",
+  "query": "(event.dataset : \"defender.devicelogonevents\" and event.outcome : \"success\" and winlog.logon.type : (\"Interactive\" or \"RemoteInteractive\" or \"CachedInteractive\") and soc.identity.correlation_key : * and not user.name : *$ and not user.domain : (\"Window Manager\" or \"Font Driver Host\")) and host.id : * and (host.name : (*srv* or *fisico*) and not host.name : (*note* or *micro*))",
   "new_terms_fields": [
-    "user.name",
-    "host.name"
+    "soc.identity.correlation_key",
+    "host.id"
   ],
   "history_window_start": "now-14d",
   "timestamp_override": "event.ingested",

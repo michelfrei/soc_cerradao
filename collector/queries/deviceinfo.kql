@@ -1,0 +1,10 @@
+// Snapshot conhecido pelo Defender nos últimos 30 dias. Não identifica ativos nunca onboarded.
+DeviceInfo
+| where Timestamp >= ago(30d)
+| summarize arg_max(Timestamp, *) by DeviceId
+| where (DeviceName contains "srv" or DeviceName contains "fisico")
+    and DeviceName !contains "note" and DeviceName !contains "micro"
+| project Timestamp, DeviceId, DeviceName, OSPlatform, DeviceType, MachineGroup,
+          OnboardingStatus, SensorHealthState
+// O coletor falha se receber 10000 linhas: nunca assume que este limite é completude.
+| take 10000

@@ -1,18 +1,23 @@
 # Detecções — piloto SOC (modo observação)
 
 Regras do Elastic Security (Kibana 9.5.5, licença basic) em `kibana/rules/<rule_id>.json`, no formato do corpo de `POST /api/detection_engine/rules` (importação via `_import` após conversão para NDJSON).
-Todas: `enabled: true`, `actions: []` (sem notificação), tags `SOC`, `SOC-observacao`, `Frente N`; índice `soc-events-*`; `max_signals` 100; `version` 1.
-Estado: **validadas em laboratório** (21/10/2026) — as 8 regras foram importadas pelo `kibana-setup`, executaram sem erro e geraram alertas com os dados de `scripts/lab/dados-sinteticos.sql` e `scripts/lab/cenarios-deteccao.sql`. Ainda não avaliadas com dados reais (taxa de falso positivo desconhecida).
+Todas: `enabled: true`, `actions: []` (sem notificação), tags `SOC`, `SOC-observacao`, `Frente N`; índice `soc-events-*`; `max_signals` 100; `version` 2.
+Versão 2 usa `soc.identity.correlation_key` e `host.id` nos agrupamentos, aplica
+inclusão `srv`/`fisico` com exclusão `note`/`micro`, e é importada no espaço `soc`.
+Os cenários sintéticos continuam como referência de comportamento; o teste
+`scripts/lab/smoke-evolution.mjs` verifica a importação/ingestão local. Ainda não
+avaliadas com dados reais (taxa de falso positivo desconhecida). Leia também
+[IDENTIDADES.md](IDENTIDADES.md) e [DEPLOY-EVOLUCAO.md](DEPLOY-EVOLUCAO.md).
 
 ## Regras
 
 | rule_id | Frente | Tipo | Lógica resumida | Sev. (risk) | MITRE |
 |---|---|---|---|---|---|
-| soc-rdp-origem-nova-servidor | 1, 4 | new_terms | Logon `RemoteInteractive` com sucesso; par novo `host.name`+`source.ip` vs. 14 d | medium (47) | T1021.001; T1078 |
-| soc-par-usuario-servidor-novo | 1 | new_terms | Logon `Interactive`/`RemoteInteractive`/`CachedInteractive` com sucesso; par novo `user.name`+`host.name` vs. 14 d | low (21) | T1078 |
-| soc-conta-muitos-servidores | 4 | threshold | Sucesso `Network`/`RemoteInteractive`; por `user.name`, ≥5 `host.name` distintos em ~70 min | high (73) | T1021.001/.002; T1078 |
-| soc-rajada-falhas-logon | 1 | threshold | Falhas (inclui agregadas) por `host.name`+`user.name` ≥10 em ~70 min; sem Service/Batch | medium (47) | T1110.001 |
-| soc-forca-bruta-sucesso | 1 | eql | `sequence by user.name maxspan=30m`: 5 falhas (`runs=5`) → 1 sucesso | high (73) | T1110.001/.003; T1078 |
+| soc-rdp-origem-nova-servidor | 1, 4 | new_terms | Logon `RemoteInteractive` com sucesso; par novo `host.id`+`source.ip` vs. 14 d | medium (47) | T1021.001; T1078 |
+| soc-par-usuario-servidor-novo | 1 | new_terms | Logon interativo com sucesso; par novo `soc.identity.correlation_key`+`host.id` vs. 14 d | low (21) | T1078 |
+| soc-conta-muitos-servidores | 4 | threshold | Sucesso Network/RDP; identidade em ≥5 `host.id` distintos em ~70 min | high (73) | T1021.001/.002; T1078 |
+| soc-rajada-falhas-logon | 1 | threshold | Falhas por `host.id`+identidade ≥10 em ~70 min; sem Service/Batch | medium (47) | T1110.001 |
+| soc-forca-bruta-sucesso | 1 | eql | Sequência por identidade maxspan=30m: 5 falhas → 1 sucesso | high (73) | T1110.001/.003; T1078 |
 | soc-asr-bloqueio | 3 | query | `soc.asr.mode:"block"`, exceto LsassCredentialTheft e PsexecWmiChildProcess | medium (47) | TA0002 (sem técnica: depende da regra ASR) |
 | soc-asr-lsass-roubo-credencial | 3, 1 | query | `soc.asr.rule:"LsassCredentialTheft"` (audit ou block) | high (73) | T1003.001 |
 | soc-asr-psexec-wmi | 3, 4 | query | `soc.asr.rule:"PsexecWmiChildProcess"` (audit ou block) | medium (47) | T1047; T1569.002; T1021.002 |
@@ -35,7 +40,7 @@ Exclusões comuns às regras de logon: contas de máquina (`user.name` terminand
 - `user.name`, `host.name`, `user.domain`, `winlog.logon.type`, `soc.asr.*`, `event.*` são `keyword` (KQL/EQL exatos, sensíveis a maiúsculas). `user.name` do Defender costuma vir em minúsculas; as exclusões de `NT AUTHORITY`/`ANONYMOUS LOGON` cobrem as duas grafias.
 - `event.outcome` vale `success`/`failure` também para `*AggregatedReport`. Um evento agregado conta como **1** documento: thresholds e `runs=5` subestimam a repetição real. Recomendação: extrair a contagem de `AdditionalFields` para campo numérico e migrar a rajada para ES|QL com `SUM`.
 - new_terms: o histórico de 14 d precisa existir no índice. Nos primeiros 14 dias de dados (ou após incluir um servidor novo na coleta) haverá excesso de alertas — esperado em observação.
-- Somente servidores com "srv"/"fisico" no nome têm DeviceLogonEvents; logons em estações não são vistos.
+- Inclui nomes com "srv"/"fisico", excluindo sempre "note"/"micro", sem diferenciar caixa.
 - `source.ip` pode vir vazio em logons RDP via gateway; a regra de RDP exige `source.ip` presente.
 
 ## Falsos positivos e exceções

@@ -1,0 +1,9 @@
+{
+  "policy": {
+    "_meta": {"description": "Snapshots operacionais: índices mensais removidos 60 dias após criação."},
+    "phases": {
+      "hot": {"min_age": "0ms", "actions": {}},
+      "delete": {"min_age": "60d", "actions": {"delete": {}}}
+    }
+  }
+}

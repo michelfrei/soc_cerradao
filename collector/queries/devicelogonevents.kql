@@ -3,4 +3,5 @@
 // Filtro do piloto: servidores (nomes com "srv" ou "fisico").
 DeviceLogonEvents
 | where Timestamp >= datetime({{start}}) and Timestamp < datetime({{end}})
-| where DeviceName contains "srv" or DeviceName contains "fisico"
+| where (DeviceName contains "srv" or DeviceName contains "fisico")
+    and DeviceName !contains "note" and DeviceName !contains "micro"

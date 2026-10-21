@@ -1,6 +1,15 @@
 {
   "sources": [
     {
+      "name": "inventory.deviceinfo",
+      "type": "inventory",
+      "table": "DeviceInfo",
+      "queryFile": "deviceinfo.kql",
+      "enabled": true,
+      "intervalSeconds": 3600,
+      "maxRows": 10000
+    },
+    {
       "name": "incidents",
       "type": "incidents",
       "enabled": true,

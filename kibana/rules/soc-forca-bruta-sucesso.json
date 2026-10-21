@@ -85,10 +85,10 @@
   ],
   "references": [],
   "max_signals": 100,
-  "version": 1,
+  "version": 2,
   "actions": [],
   "exceptions_list": [],
-  "note": "## Triagem\n- Compare source.ip das falhas e do sucesso; origem diferente ou externa aumenta a suspeita.\n- Verifique event.reason das falhas (senha errada vs. conta bloqueada).\n- Confirme com o usuário e, se suspeito, avalie troca de senha (fora do modo observação, com autorização).",
+  "note": "## Triagem\n- Compare source.ip das falhas e do sucesso; origem diferente ou externa aumenta a suspeita.\n- Verifique event.reason das falhas (senha errada vs. conta bloqueada).\n- Confirme com o usuário e, se suspeito, avalie troca de senha (fora do modo observação, com autorização).\n- Correlação: use soc.identity.correlation_key e host.id; soc.identity.key/SID permanecem no detalhe. Contas homônimas de domínios ou servidores diferentes não devem ser mescladas.",
   "language": "eql",
-  "query": "sequence by user.name with maxspan=30m\n  [any where event.dataset == \"defender.devicelogonevents\" and event.outcome == \"failure\" and user.name != null and not endsWith(user.name, \"$\") and (winlog.logon.type == null or winlog.logon.type not in (\"Service\", \"Batch\"))] with runs=5\n  [any where event.dataset == \"defender.devicelogonevents\" and event.outcome == \"success\" and user.name != null and not endsWith(user.name, \"$\") and (winlog.logon.type == null or winlog.logon.type not in (\"Service\", \"Batch\"))]"
+  "query": "sequence by soc.identity.correlation_key with maxspan=30m\n  [any where event.dataset == \"defender.devicelogonevents\" and event.outcome == \"failure\" and soc.identity.correlation_key != null and host.id != null and (host.name : (\"*srv*\", \"*fisico*\") and not host.name : (\"*note*\", \"*micro*\")) and not endsWith(user.name, \"$\") and (winlog.logon.type == null or winlog.logon.type not in (\"Service\", \"Batch\"))] with runs=5\n  [any where event.dataset == \"defender.devicelogonevents\" and event.outcome == \"success\" and soc.identity.correlation_key != null and host.id != null and (host.name : (\"*srv*\", \"*fisico*\") and not host.name : (\"*note*\", \"*micro*\")) and not endsWith(user.name, \"$\") and (winlog.logon.type == null or winlog.logon.type not in (\"Service\", \"Batch\"))]"
 }

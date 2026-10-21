@@ -33,6 +33,12 @@
         },
         "ingested": {
           "type": "date"
+        },
+        "category": {
+          "type": "keyword"
+        },
+        "type": {
+          "type": "keyword"
         }
       }
     },
@@ -223,6 +229,166 @@
               "type": "date"
             }
           }
+        },
+        "scope": {
+          "properties": {
+            "included": {
+              "type": "boolean"
+            }
+          }
+        },
+        "identity": {
+          "properties": {
+            "key": {
+              "type": "keyword"
+            },
+            "correlation_key": {
+              "type": "keyword"
+            },
+            "display": {
+              "type": "keyword"
+            },
+            "scope": {
+              "type": "keyword"
+            },
+            "type": {
+              "type": "keyword"
+            },
+            "confidence": {
+              "type": "keyword"
+            },
+            "has_sid": {
+              "type": "boolean"
+            },
+            "classification_source": {
+              "type": "keyword"
+            },
+            "is_local_admin": {
+              "type": "boolean"
+            },
+            "privileged": {
+              "type": "boolean"
+            },
+            "owner": {
+              "type": "keyword"
+            }
+          }
+        },
+        "asset": {
+          "properties": {
+            "expected": {
+              "type": "boolean"
+            },
+            "observed": {
+              "type": "boolean"
+            },
+            "owner": {
+              "type": "keyword"
+            },
+            "environment": {
+              "type": "keyword"
+            },
+            "criticality": {
+              "type": "keyword"
+            },
+            "onboarding_status": {
+              "type": "keyword"
+            },
+            "sensor_health": {
+              "type": "keyword"
+            },
+            "device_type": {
+              "type": "keyword"
+            },
+            "machine_group": {
+              "type": "keyword"
+            },
+            "os_platform": {
+              "type": "keyword"
+            },
+            "last_seen": {
+              "type": "date"
+            },
+            "snapshot_at": {
+              "type": "date"
+            }
+          }
+        },
+        "metrics": {
+          "properties": {
+            "source": {
+              "type": "keyword"
+            },
+            "status": {
+              "type": "keyword"
+            },
+            "finished_at": {
+              "type": "date"
+            },
+            "started_at": {
+              "type": "date"
+            },
+            "watermark": {
+              "type": "date"
+            },
+            "window_start": {
+              "type": "date"
+            },
+            "window_end": {
+              "type": "date"
+            },
+            "lag_seconds": {
+              "type": "double"
+            },
+            "duration_ms": {
+              "type": "double"
+            },
+            "elastic_cpu_percent": {
+              "type": "double"
+            },
+            "fetched": {
+              "type": "long"
+            },
+            "inserted": {
+              "type": "long"
+            },
+            "changed": {
+              "type": "long"
+            },
+            "api_calls": {
+              "type": "long"
+            },
+            "throttled": {
+              "type": "long"
+            },
+            "database_bytes": {
+              "type": "long"
+            },
+            "raw_bytes": {
+              "type": "long"
+            },
+            "publication_bytes": {
+              "type": "long"
+            },
+            "history_bytes": {
+              "type": "long"
+            },
+            "elastic_heap_used_bytes": {
+              "type": "long"
+            },
+            "elastic_heap_max_bytes": {
+              "type": "long"
+            },
+            "elastic_fs_total_bytes": {
+              "type": "long"
+            },
+            "elastic_fs_available_bytes": {
+              "type": "long"
+            },
+            "elastic_store_bytes": {
+              "type": "long"
+            }
+          }
         }
       }
     },
@@ -230,6 +396,13 @@
       "type": "flattened",
       "depth_limit": 20,
       "ignore_above": 4096
+    },
+    "ecs": {
+      "properties": {
+        "version": {
+          "type": "keyword"
+        }
+      }
     }
   }
 }

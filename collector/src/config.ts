@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { z } from 'zod';
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -27,6 +27,7 @@ const EnvSchema = z.object({
 
   SOURCES_FILE: z.string().default('/app/config/sources.json'),
   QUERIES_DIR: z.string().default('/app/queries'),
+  ASSETS_FILE: z.string().optional(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   HEALTH_PORT: z.coerce.number().int().default(8080),
 });
@@ -57,13 +58,45 @@ const HuntingSource = BaseSource.extend({
   maxWindowsPerRun: z.number().int().min(1).default(24),
 });
 
+const InventorySource = BaseSource.extend({
+  type: z.literal('inventory'),
+  table: z.literal('DeviceInfo').default('DeviceInfo'),
+  queryFile: z.string().regex(/^[a-z0-9_.-]+\.kql$/).default('deviceinfo.kql'),
+  maxRows: z.number().int().min(100).max(10_000).default(10_000),
+});
+
+const ExpectedAsset = z.object({
+  name: z.string().trim().min(1),
+  id: z.string().trim().min(1).optional(),
+  owner: z.string().trim().min(1).optional(),
+  environment: z.string().trim().min(1).optional(),
+  criticality: z.string().trim().min(1).optional(),
+});
+
+export type ExpectedAssetConfig = z.infer<typeof ExpectedAsset>;
+
+export function parseAssets(raw: unknown): ExpectedAssetConfig[] {
+  const assets = z.object({ assets: z.array(ExpectedAsset) }).parse(raw).assets;
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  for (const a of assets) {
+    if (a.id && ids.has(a.id)) throw new Error(`DeviceId esperado duplicado: ${a.id}`);
+    const name = a.name?.toLowerCase();
+    if (name && names.has(name)) throw new Error(`nome esperado duplicado: ${a.name}`);
+    if (a.id) ids.add(a.id);
+    if (name) names.add(name);
+  }
+  return assets;
+}
+
 const SourcesFile = z.object({
-  sources: z.array(z.discriminatedUnion('type', [ObjectSource, HuntingSource])),
+  sources: z.array(z.discriminatedUnion('type', [ObjectSource, HuntingSource, InventorySource])),
 });
 
 export type ObjectSourceConfig = z.infer<typeof ObjectSource>;
 export type HuntingSourceConfig = z.infer<typeof HuntingSource> & { query: string };
-export type SourceConfig = ObjectSourceConfig | HuntingSourceConfig;
+export type InventorySourceConfig = z.infer<typeof InventorySource> & { query: string };
+export type SourceConfig = ObjectSourceConfig | HuntingSourceConfig | InventorySourceConfig;
 
 export type GraphCredential =
   | { kind: 'secret'; clientSecret: string }
@@ -91,6 +124,7 @@ export interface Config {
     poolMax: number;
   };
   sources: SourceConfig[];
+  assets: ExpectedAssetConfig[];
   logLevel: string;
   healthPort: number;
 }
@@ -134,12 +168,12 @@ export function parseSources(raw: unknown, readQuery: (file: string) => string):
   return parsed.sources.map((s) => {
     if (names.has(s.name)) throw new Error(`fonte duplicada: ${s.name}`);
     names.add(s.name);
-    if (s.type !== 'hunting') return s;
-    if (s.minWindowMinutes > s.maxWindowMinutes) {
+    if (s.type !== 'hunting' && s.type !== 'inventory') return s;
+    if (s.type === 'hunting' && s.minWindowMinutes > s.maxWindowMinutes) {
       throw new Error(`${s.name}: minWindowMinutes maior que maxWindowMinutes`);
     }
     const query = readQuery(s.queryFile);
-    if (!query.includes('{{start}}') || !query.includes('{{end}}')) {
+    if (s.type === 'hunting' && (!query.includes('{{start}}') || !query.includes('{{end}}'))) {
       throw new Error(`${s.queryFile}: a consulta precisa conter {{start}} e {{end}}`);
     }
     // A primeira instrução precisa ler a tabela declarada; evita gravar eventos
@@ -156,6 +190,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const e = EnvSchema.parse(env);
   const sourcesRaw: unknown = JSON.parse(readFileSync(e.SOURCES_FILE, 'utf8'));
   const sources = parseSources(sourcesRaw, (file) => readFileSync(join(e.QUERIES_DIR, file), 'utf8'));
+  const assetsFile = e.ASSETS_FILE ?? join(dirname(e.SOURCES_FILE), 'assets.json');
+  let assets: ExpectedAssetConfig[] = [];
+  try {
+    assets = parseAssets(JSON.parse(readFileSync(assetsFile, 'utf8')));
+  } catch (err) {
+    // Optional only when absent. A malformed/inaccessible existing file fails startup.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
 
   return {
     graph: {
@@ -179,6 +221,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       poolMax: e.PG_POOL_MAX,
     },
     sources,
+    assets,
     logLevel: e.LOG_LEVEL,
     healthPort: e.HEALTH_PORT,
   };

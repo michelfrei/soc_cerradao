@@ -1,5 +1,10 @@
 # Runbook — piloto no Hyper-V
 
+> **Evolução de ambiente existente:** use primeiro [DEPLOY-EVOLUCAO.md](DEPLOY-EVOLUCAO.md).
+> A versão atual acrescenta inventário, identidades, capacidade e cinco dashboards
+> no espaço `/s/soc`. As seções abaixo registram também a implantação inicial;
+> não recrie banco, checkpoints ou CA para aplicar essa evolução.
+
 Duas VMs Ubuntu 26.04:
 
 | VM | Função | Portas de entrada |

@@ -3,11 +3,12 @@
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ensurePartitions, insertEvents, setCheckpoint, getCheckpoint, upsertObjects, withTransaction, type RunCounters } from '../src/db.js';
-import { parseSources, type HuntingSourceConfig } from '../src/config.js';
+import { parseSources, type HuntingSourceConfig, type InventorySourceConfig } from '../src/config.js';
 import type { GraphClient } from '../src/graph/client.js';
 import type { Logger } from '../src/logger.js';
 import { collectHunting, toEventRow } from '../src/sources/hunting.js';
 import { toObjectRow } from '../src/sources/objects.js';
+import { collectInventory } from '../src/sources/inventory.js';
 
 const host = process.env.SOC_TEST_PG_HOST;
 const port = Number(process.env.SOC_TEST_PG_PORT ?? 5432);
@@ -158,5 +159,46 @@ describe.skipIf(!host)('PostgreSQL (integração)', () => {
   it('o usuário do Logstash só lê a publicação', async () => {
     await expect(logstash.query('SELECT 1 FROM soc.raw_event LIMIT 1')).rejects.toThrow(/permission denied/);
     await expect(logstash.query("INSERT INTO soc.collector_checkpoint VALUES ('x', now())")).rejects.toThrow(/permission denied/);
+  });
+
+  it('inventário promove esperado sem duplicar publicação e mantém silencioso', async () => {
+    const src = parseSources({ sources: [{ name: 'test.inventory', type: 'inventory' }] },
+      () => 'DeviceInfo | summarize arg_max(Timestamp, *) by DeviceId')[0] as InventorySourceConfig;
+    let results: Record<string, unknown>[] = [];
+    const graph = { request: async () => ({ results }) } as unknown as GraphClient;
+    const log = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger;
+    const deps = { pool: collector, graph, log, assets: [{ name: 'srv-inventory-test', owner: 'SOC' }] };
+    const counters = (): RunCounters => ({ fetched: 0, inserted: 0, changed: 0, apiCalls: 0, throttled: 0 });
+    await collectInventory(src, deps, counters());
+    results = [{ DeviceId: 'inventory-test-id', DeviceName: 'SRV-INVENTORY-TEST',
+      Timestamp: '2026-10-21T10:00:00.1234567Z', OSPlatform: 'WindowsServer2022' }];
+    await collectInventory(src, deps, counters());
+    results = [];
+    await collectInventory(src, deps, counters());
+    const state = await collector.query(`SELECT inventory_key, payload FROM soc.device_inventory
+      WHERE device_id = 'inventory-test-id' OR inventory_key = 'expected:srv-inventory-test'`);
+    expect(state.rows).toHaveLength(1);
+    expect(state.rows[0]).toMatchObject({ inventory_key: 'expected:srv-inventory-test', payload: {
+      SOCExpected: true, SOCObserved: false, SOCOwner: 'SOC', Timestamp: '2026-10-21T10:00:00.1234567Z',
+    } });
+    const pub = await logstash.query(`SELECT DISTINCT doc_id FROM soc.publication WHERE entity='device'
+      AND payload->>'DeviceId'='inventory-test-id'`);
+    expect(pub.rows).toEqual([{ doc_id: 'expected:srv-inventory-test' }]);
+    await expect(logstash.query('SELECT * FROM soc.device_inventory')).rejects.toThrow(/permission denied/);
+  });
+
+  it('telemetria usa último run concluído, IDs por minuto e capacidade de partições sem acesso a raw', async () => {
+    await collector.query(`INSERT INTO soc.collector_run (source, status, started_at, finished_at, fetched)
+      VALUES ('test.telemetry', 'success', now() - interval '2 minutes', now() - interval '1 minute', 7),
+             ('test.telemetry', 'running', now(), NULL, 999)`);
+    const sample = await logstash.query(`SELECT dataset, doc_id, payload_json FROM soc.v_telemetry`);
+    const status = sample.rows.find((r) => JSON.parse(r.payload_json).source === 'test.telemetry');
+    expect(JSON.parse(status.payload_json)).toMatchObject({ status: 'success', fetched: 7, lag_seconds: null });
+    const capacity = sample.rows.find((r) => r.dataset === 'database_capacity');
+    expect(JSON.parse(capacity.payload_json)).toMatchObject({ source: 'database.capacity' });
+    expect(Number(JSON.parse(capacity.payload_json).raw_bytes)).toBeGreaterThan(0);
+    expect(Number(JSON.parse(capacity.payload_json).database_bytes)).toBeGreaterThan(0);
+    const repeated = await logstash.query(`SELECT doc_id FROM soc.v_telemetry WHERE dataset='database_capacity'`);
+    expect(repeated.rows[0].doc_id).toBe(capacity.doc_id);
   });
 });

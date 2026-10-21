@@ -37,6 +37,10 @@ extract() {
 }
 
 if [[ ! -f "$CA_DIR/ca/ca.key" ]]; then
+    if [[ -f "$CERTS/ca/ca.crt" || -f "$CERTS/es01/es01.crt" || -f /export/ca/ca.crt ]]; then
+        echo "CA privada ausente com certificados existentes. Restaure ca_private; não será criada outra CA." >&2
+        exit 1
+    fi
     echo "Gerando CA"
     bin/elasticsearch-certutil ca --silent --pem -out "$CA_DIR/ca.zip"
     extract "$CA_DIR/ca.zip" "$CA_DIR"
@@ -48,7 +52,7 @@ extra_ip=""
 [[ -n "${SOC_PUBLIC_DNS:-}" ]] && extra_dns=", ${SOC_PUBLIC_DNS}"
 [[ -n "${SOC_PUBLIC_IP:-}" ]] && extra_ip=", ${SOC_PUBLIC_IP}"
 
-if [[ ! -f "$CERTS/es01/es01.crt" ]]; then
+if [[ ! -f "$CERTS/es01/es01.crt" && ! -f "$CERTS/kibana/kibana.crt" ]]; then
     echo "Gerando certificados"
     cat > "$CA_DIR/instances.yml" <<EOF
 instances:
@@ -67,6 +71,12 @@ EOF
     cp "$CA_DIR/ca/ca.crt" "$CERTS/ca/ca.crt"
 fi
 
+# Nunca substituir silenciosamente um conjunto parcial nem trocar a confiança.
+for f in ca/ca.crt es01/es01.crt es01/es01.key kibana/kibana.crt kibana/kibana.key; do
+    [[ -s "$CERTS/$f" ]] || { echo "Certificado/chave ausente: $f. Restaure o volume legado." >&2; exit 1; }
+done
+[[ "$(cat "$CA_DIR/ca/ca.crt")" == "$(cat "$CERTS/ca/ca.crt")" ]] || { echo "CA pública e privada divergentes; restaure o conjunto correto." >&2; exit 1; }
+
 # A chave da CA fica só no volume do setup; os serviços (uid 1000) leem os certificados.
 chown -R root:root "$CA_DIR"
 chmod -R go-rwx "$CA_DIR"
@@ -74,6 +84,21 @@ chown -R 1000:0 "$CERTS"
 find "$CERTS" -type d -exec chmod 750 {} \;
 find "$CERTS" -type f -exec chmod 640 {} \;
 chmod 644 "$CA_CRT"
+
+# O volume legado só é montado neste gerador. Publica material mínimo por serviço,
+# preservando exatamente a CA e os certificados existentes, inclusive na migração.
+publish() {
+    local source=$1 destination=$2 mode=$3
+    install -o 1000 -g 0 -m "$mode" "$source" "${destination}.tmp"
+    mv -f "${destination}.tmp" "$destination"
+}
+install -d -o 1000 -g 0 -m 755 /export/ca
+install -d -o 1000 -g 0 -m 750 /export/es01 /export/kibana
+publish "$CA_CRT" /export/ca/ca.crt 644
+for service in es01 kibana; do
+    publish "$CERTS/$service/$service.crt" "/export/$service/$service.crt" 640
+    publish "$CERTS/$service/$service.key" "/export/$service/$service.key" 640
+done
 echo "Certificados prontos"
 exit 0
 fi
@@ -134,15 +159,8 @@ es PUT /_security/role/soc_logstash_writer --data-binary @"$tmp" >/dev/null
 printf '{"password":"%s","roles":["soc_logstash_writer"],"full_name":"Logstash SOC"}' "$SOC_ES_LOGSTASH_PASSWORD" > "$tmp"
 es PUT "/_security/user/${SOC_ES_LOGSTASH_USER}" --data-binary @"$tmp" >/dev/null
 
-# Papel de leitura para analistas (atribua a usuários criados no Kibana).
-cat > "$tmp" <<'EOF'
-{
-  "indices": [
-    { "names": ["soc-*"], "privileges": ["read", "view_index_metadata"] }
-  ]
-}
-EOF
-es PUT /_security/role/soc_reader --data-binary @"$tmp" >/dev/null
+# Papéis humanos completos (índices + recursos por espaço) são geridos pelo
+# kibana-setup via API Kibana. Não sobrescrever aqui as permissões de aplicações.
 
 # 4. ILM e templates -----------------------------------------------------------------
 for f in "$SETUP"/ilm/*.json; do

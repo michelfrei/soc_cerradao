@@ -21,6 +21,9 @@ services:
     volumes:
       - certs:/usr/share/elasticsearch/config/certs
       - ca_private:/usr/share/elasticsearch/config/ca-private
+      - certs_public:/export/ca
+      - certs_es:/export/es01
+      - certs_kibana:/export/kibana
       - ../elasticsearch:/setup:ro
     logging: *logging
 
@@ -38,7 +41,7 @@ services:
       SOC_ES_LOGSTASH_USER: ${SOC_ES_LOGSTASH_USER:-soc_logstash}
       SOC_ES_LOGSTASH_PASSWORD: ${SOC_ES_LOGSTASH_PASSWORD:?}
     volumes:
-      - certs:/usr/share/elasticsearch/config/certs:ro
+      - certs_public:/usr/share/elasticsearch/config/certs/ca:ro
       - ../elasticsearch:/setup:ro
     logging: *logging
 
@@ -67,7 +70,8 @@ services:
       xpack.security.transport.ssl.verification_mode: certificate
       xpack.license.self_generated.type: ${ES_LICENSE:-basic}
     volumes:
-      - certs:/usr/share/elasticsearch/config/certs:ro
+      - certs_public:/usr/share/elasticsearch/config/certs/ca:ro
+      - certs_es:/usr/share/elasticsearch/config/certs/es01:ro
       - ${ES_DATA_DIR:-/srv/soc/esdata}:/usr/share/elasticsearch/data
       - ${ES_SNAPSHOT_DIR:-/srv/soc/es-snapshots}:/usr/share/elasticsearch/snapshots
     ports:
@@ -108,7 +112,8 @@ services:
       XPACK_REPORTING_ENCRYPTIONKEY: ${KIBANA_REPORTING_KEY:?}
       TELEMETRY_OPTIN: "false"
     volumes:
-      - certs:/usr/share/kibana/config/certs:ro
+      - certs_public:/usr/share/kibana/config/certs/ca:ro
+      - certs_kibana:/usr/share/kibana/config/certs/kibana:ro
       - kibana_data:/usr/share/kibana/data
     ports:
       - ${KIBANA_BIND:-0.0.0.0}:5601:5601
@@ -132,7 +137,7 @@ services:
     environment:
       ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
     volumes:
-      - certs:/usr/share/elasticsearch/config/certs:ro
+      - certs_public:/usr/share/elasticsearch/config/certs/ca:ro
       - ../kibana:/kibana:ro
     logging: *logging
 
@@ -152,15 +157,18 @@ services:
       SOC_PG_HOST: ${SOC_PG_HOST:?defina SOC_PG_HOST no .env}
       SOC_PG_PORT: ${SOC_PG_PORT:-5432}
       SOC_PG_SSLMODE: ${SOC_PG_SSLMODE:-require}
+      SOC_PG_SSLROOTCERT: /usr/share/logstash/pg-ca/ca.crt
       SOC_LOGSTASH_DB_USER: soc_logstash
       SOC_LOGSTASH_DB_PASSWORD: ${SOC_LOGSTASH_DB_PASSWORD:?}
       SOC_ES_HOSTS: https://es01:9200
       SOC_ES_LOGSTASH_USER: ${SOC_ES_LOGSTASH_USER:-soc_logstash}
       SOC_ES_LOGSTASH_PASSWORD: ${SOC_ES_LOGSTASH_PASSWORD}
     volumes:
-      - certs:/usr/share/logstash/certs:ro
+      - certs_public:/usr/share/logstash/certs/ca:ro
+      - ./certs/postgres:/usr/share/logstash/pg-ca:ro
       - ../logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
       - ../logstash/config/pipelines.yml:/usr/share/logstash/config/pipelines.yml:ro
+      - ../logstash/config/identities.json:/usr/share/logstash/config/identities.json:ro
       - ../logstash/pipeline:/usr/share/logstash/pipeline:ro
       - ../logstash/sql:/usr/share/logstash/sql:ro
       - ${LS_DATA_DIR:-/srv/soc/logstash-data}:/usr/share/logstash/data
@@ -176,7 +184,7 @@ services:
   collector:
     build:
       context: ../collector
-    image: soc/collector:${COLLECTOR_VERSION:-0.1.0}
+    image: soc/collector:${COLLECTOR_VERSION:-0.2.0}
     environment:
       GRAPH_TENANT_ID: ${GRAPH_TENANT_ID:?defina GRAPH_TENANT_ID no .env}
       GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID:?defina GRAPH_CLIENT_ID no .env}
@@ -188,6 +196,7 @@ services:
       PGUSER: soc_collector
       PGPASSWORD_FILE: /run/secrets/pg_collector_password
       PGSSLMODE: ${SOC_PG_SSLMODE:-require}
+      PGSSLROOTCERT_FILE: /app/pg-ca/ca.crt
       LOG_LEVEL: ${COLLECTOR_LOG_LEVEL:-info}
       # Proxy corporativo, se houver (Node 24 lê HTTPS_PROXY com NODE_USE_ENV_PROXY=1).
       HTTPS_PROXY: ${HTTPS_PROXY:-}
@@ -200,6 +209,18 @@ services:
       # Fontes e consultas podem ser ajustadas sem rebuild (reinicie o container).
       - ../collector/config:/app/config:ro
       - ../collector/queries:/app/queries:ro
+      - ./certs/postgres:/app/pg-ca:ro
+    # Configuração antiga com require não tenta ler uma CA ainda não instalada.
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        if [ "$$PGSSLMODE" = verify-full ]; then
+          test -s "$$PGSSLROOTCERT_FILE" || { echo 'CA PostgreSQL ausente para verify-full' >&2; exit 1; }
+        else
+          unset PGSSLROOTCERT_FILE
+        fi
+        exec node --enable-source-maps dist/index.js
     read_only: true
     tmpfs:
       - /tmp
@@ -219,4 +240,7 @@ secrets:
 volumes:
   certs:
   ca_private:
+  certs_public:
+  certs_es:
+  certs_kibana:
   kibana_data:
