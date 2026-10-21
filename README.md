@@ -69,4 +69,4 @@ cd collector
 npm install
 npm run typecheck
 npm test
-```
+``````
