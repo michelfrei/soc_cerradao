@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Executado uma vez pelo serviço "setup" do Compose (imagem do Elasticsearch, como root).
-#  1. Gera a CA e os certificados de es01 e kibana (somente na primeira vez).
-#  2. Aguarda o Elasticsearch e define a senha do kibana_system.
-#  3. Cria o papel e o usuário do Logstash.
-#  4. Aplica políticas ILM e templates de índice.
+# Executado pelo Compose na imagem do Elasticsearch, como root, em duas etapas:
+#   setup.sh certs   (serviço "certs", antes do es01)
+#     1. Gera a CA e os certificados de es01 e kibana (somente na primeira vez).
+#   setup.sh config  (serviço "setup", depois que o es01 está saudável)
+#     2. Define a senha do kibana_system.
+#     3. Cria o papel e o usuário do Logstash e o papel de leitura.
+#     4. Aplica políticas ILM e templates de índice.
 # Idempotente: pode ser executado de novo após alterar templates.
 set -euo pipefail
 
-: "${ELASTIC_PASSWORD:?defina ELASTIC_PASSWORD}"
-: "${KIBANA_PASSWORD:?defina KIBANA_PASSWORD}"
-: "${SOC_ES_LOGSTASH_USER:?defina SOC_ES_LOGSTASH_USER}"
-: "${SOC_ES_LOGSTASH_PASSWORD:?defina SOC_ES_LOGSTASH_PASSWORD}"
+MODE="${1:-}"
+case "$MODE" in
+    certs|config) ;;
+    *) echo "uso: setup.sh certs|config" >&2; exit 2 ;;
+esac
 
 CERTS=/usr/share/elasticsearch/config/certs
 CA_DIR=/usr/share/elasticsearch/config/ca-private
@@ -18,10 +21,7 @@ SETUP=/setup
 ES_URL=https://es01:9200
 CA_CRT="$CERTS/ca/ca.crt"
 
-for pw in "$ELASTIC_PASSWORD" "$KIBANA_PASSWORD" "$SOC_ES_LOGSTASH_PASSWORD"; do
-    [[ "$pw" =~ ^[A-Za-z0-9_-]{16,}$ ]] || { echo "Senhas devem ter 16+ caracteres [A-Za-z0-9_-]." >&2; exit 1; }
-done
-
+if [[ "$MODE" == "certs" ]]; then
 # 1. Certificados -----------------------------------------------------------------
 # Extrai um .zip com unzip; sem ele (imagens mais enxutas), usa o jar do JDK embutido.
 extract() {
@@ -74,6 +74,20 @@ chown -R 1000:0 "$CERTS"
 find "$CERTS" -type d -exec chmod 750 {} \;
 find "$CERTS" -type f -exec chmod 640 {} \;
 chmod 644 "$CA_CRT"
+echo "Certificados prontos"
+exit 0
+fi
+
+# Etapa config ----------------------------------------------------------------------
+: "${ELASTIC_PASSWORD:?defina ELASTIC_PASSWORD}"
+: "${KIBANA_PASSWORD:?defina KIBANA_PASSWORD}"
+: "${SOC_ES_LOGSTASH_USER:?defina SOC_ES_LOGSTASH_USER}"
+: "${SOC_ES_LOGSTASH_PASSWORD:?defina SOC_ES_LOGSTASH_PASSWORD}"
+
+for pw in "$ELASTIC_PASSWORD" "$KIBANA_PASSWORD" "$SOC_ES_LOGSTASH_PASSWORD"; do
+    [[ "$pw" =~ ^[A-Za-z0-9_-]{16,}$ ]] || { echo "Senhas devem ter 16+ caracteres [A-Za-z0-9_-]." >&2; exit 1; }
+done
+[[ -f "$CA_CRT" ]] || { echo "CA não encontrada em $CA_CRT; o serviço certs rodou?" >&2; exit 1; }
 
 # 2. Aguarda o Elasticsearch --------------------------------------------------------
 # Credenciais vão por stdin (-K-) para não aparecerem na lista de processos.

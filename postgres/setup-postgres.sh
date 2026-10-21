@@ -116,7 +116,16 @@ diff -u "$BACKUP/pg_hba.conf" "$CONF_DIR/pg_hba.conf" || true
 # 4. Firewall -------------------------------------------------------------------
 if [[ "$CONFIGURE_UFW" == "1" ]]; then
     command -v ufw >/dev/null || die "ufw não encontrado (use CONFIGURE_UFW=0 para pular)."
-    ufw allow OpenSSH >/dev/null
+    # Libera as portas em que o sshd realmente escuta (não presume a 22).
+    ssh_ports="$(sshd -T 2>/dev/null | awk '$1 == "port" {print $2}' | sort -u)"
+    [[ -n "$ssh_ports" ]] || ssh_ports=22
+    for p in $ssh_ports; do
+        ufw allow "${p}/tcp" >/dev/null
+        echo "ufw: SSH liberado na porta $p"
+    done
+    if ufw status | grep -q '^Status: active'; then
+        echo "ufw já estava ativo; regras existentes foram mantidas."
+    fi
     ufw allow from "$DOCKER_HOST_IP" to any port 5432 proto tcp >/dev/null
     if [[ -n "${ADMIN_CIDR:-}" ]]; then
         ufw allow from "$ADMIN_CIDR" to any port 5432 proto tcp >/dev/null
@@ -125,13 +134,34 @@ if [[ "$CONFIGURE_UFW" == "1" ]]; then
     ufw status verbose
 fi
 
-# 5. Reinício (listen_addresses exige restart) ----------------------------------
-systemctl restart "postgresql@${PG_VERSION}-${PG_CLUSTER}"
+# 5. Aplicar: restart só se a configuração mudou (listen_addresses e memória
+#    exigem restart); mudança apenas no pg_hba basta um reload. A linha de
+#    cabeçalho com a data é ignorada na comparação.
+SERVICE="postgresql@${PG_VERSION}-${PG_CLUSTER}"
+conf_changed=1
+if [[ -f "$BACKUP/conf.d/10-soc.conf" ]] && \
+   diff -q <(tail -n +2 "$BACKUP/conf.d/10-soc.conf") <(tail -n +2 "$CONF_DIR/conf.d/10-soc.conf") >/dev/null; then
+    conf_changed=0
+fi
+hba_changed=1
+if diff -q <(grep -v '^#' "$BACKUP/pg_hba.conf") <(grep -v '^#' "$CONF_DIR/pg_hba.conf") >/dev/null; then
+    hba_changed=0
+fi
+
+if [[ $conf_changed -eq 1 ]] || ! systemctl is-active --quiet "$SERVICE"; then
+    echo "Reiniciando $SERVICE (configuração alterada)"
+    systemctl restart "$SERVICE"
+elif [[ $hba_changed -eq 1 ]]; then
+    echo "Recarregando $SERVICE (pg_hba.conf alterado)"
+    systemctl reload "$SERVICE"
+else
+    echo "Configuração sem mudanças; PostgreSQL não foi reiniciado."
+fi
 for _ in $(seq 1 30); do
     sudo -u postgres pg_isready -q && break
     sleep 1
 done
-sudo -u postgres pg_isready -q || die "PostgreSQL não voltou após o reinício. Veja: journalctl -u postgresql@${PG_VERSION}-${PG_CLUSTER}"
+sudo -u postgres pg_isready -q || die "PostgreSQL indisponível. Veja: journalctl -u ${SERVICE}"
 
 # Senhas ------------------------------------------------------------------------
 install -d -m 700 "$SECRETS_DIR"

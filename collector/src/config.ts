@@ -142,6 +142,12 @@ export function parseSources(raw: unknown, readQuery: (file: string) => string):
     if (!query.includes('{{start}}') || !query.includes('{{end}}')) {
       throw new Error(`${s.queryFile}: a consulta precisa conter {{start}} e {{end}}`);
     }
+    // A primeira instrução precisa ler a tabela declarada; evita gravar eventos
+    // de uma tabela com o nome de outra (ex.: ASR dentro de DeviceLogonEvents).
+    const firstTable = /^\s*([A-Za-z]+)/.exec(query.replace(/\/\/[^\n]*/g, ''))?.[1];
+    if (firstTable !== s.table) {
+      throw new Error(`${s.queryFile}: a consulta lê "${firstTable ?? '?'}", mas a fonte ${s.name} declara a tabela "${s.table}"`);
+    }
     return { ...s, query };
   });
 }

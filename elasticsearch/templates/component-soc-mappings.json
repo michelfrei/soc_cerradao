@@ -36,6 +36,13 @@
             "port": { "type": "long", "ignore_malformed": true }
           }
         },
+        "destination": {
+          "properties": {
+            "ip": { "type": "ip", "ignore_malformed": true },
+            "domain": { "type": "keyword" },
+            "port": { "type": "long", "ignore_malformed": true }
+          }
+        },
         "process": {
           "properties": {
             "name": { "type": "keyword" },

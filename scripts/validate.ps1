@@ -78,6 +78,11 @@ try {
                     -c 'SET ROLE soc_owner' -f - -c "INSERT INTO soc.schema_migrations (version) VALUES ('$v')"
             if ($LASTEXITCODE -ne 0) { throw "migração $v falhou" }
         }
+        # Rotinas de manutenção: o procedimento precisa conseguir confirmar fatias (COMMIT).
+        docker exec $pg psql -X -q -v ON_ERROR_STOP=1 -U postgres -d soc `
+            -c "CALL soc.republish_events('DeviceLogonEvents', now() - interval '3 days', now())" `
+            -c "SELECT soc.purge_publication(0)" -c "SELECT soc.republish_objects('incident')"
+        if ($LASTEXITCODE -ne 0) { throw 'rotinas de manutenção falharam' }
     }
 
     Invoke-Step 'Coletor: dependências, tipos e testes' {

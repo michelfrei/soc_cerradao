@@ -45,6 +45,36 @@
       "minWindowMinutes": 1,
       "maxRows": 30000,
       "maxWindowsPerRun": 8
+    },
+    {
+      "name": "reconcile.devicelogonevents",
+      "type": "hunting",
+      "table": "DeviceLogonEvents",
+      "queryFile": "devicelogonevents.kql",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "overlapMinutes": 1440,
+      "ingestionLagMinutes": 5,
+      "initialLookbackHours": 6,
+      "maxWindowMinutes": 360,
+      "minWindowMinutes": 1,
+      "maxRows": 30000,
+      "maxWindowsPerRun": 4
+    },
+    {
+      "name": "reconcile.asr",
+      "type": "hunting",
+      "table": "DeviceEvents",
+      "queryFile": "asr.kql",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "overlapMinutes": 1440,
+      "ingestionLagMinutes": 5,
+      "initialLookbackHours": 6,
+      "maxWindowMinutes": 360,
+      "minWindowMinutes": 1,
+      "maxRows": 30000,
+      "maxWindowsPerRun": 4
     }
   ]
 }

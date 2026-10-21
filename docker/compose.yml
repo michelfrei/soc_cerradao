@@ -10,33 +10,43 @@ x-logging: &logging
     max-file: "5"
 
 services:
-  setup:
+  # Execução única: gera a CA e os certificados (só na primeira vez) e termina.
+  certs:
     image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION:?defina STACK_VERSION no .env}
     user: "0"
-    command: ["bash", "/setup/setup.sh"]
+    command: ["bash", "/setup/setup.sh", "certs"]
     environment:
-      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:?}
-      KIBANA_PASSWORD: ${KIBANA_PASSWORD:?}
-      SOC_ES_LOGSTASH_USER: ${SOC_ES_LOGSTASH_USER:-soc_logstash}
-      SOC_ES_LOGSTASH_PASSWORD: ${SOC_ES_LOGSTASH_PASSWORD:?}
       SOC_PUBLIC_DNS: ${SOC_PUBLIC_DNS:-}
       SOC_PUBLIC_IP: ${SOC_PUBLIC_IP:-}
     volumes:
       - certs:/usr/share/elasticsearch/config/certs
       - ca_private:/usr/share/elasticsearch/config/ca-private
       - ../elasticsearch:/setup:ro
-    healthcheck:
-      test: ["CMD-SHELL", "[ -f /usr/share/elasticsearch/config/certs/es01/es01.crt ]"]
-      interval: 2s
-      timeout: 5s
-      retries: 120
+    logging: *logging
+
+  # Execução única: usuários, papéis, ILM e templates, com o es01 já saudável.
+  setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    user: "0"
+    command: ["bash", "/setup/setup.sh", "config"]
+    depends_on:
+      es01:
+        condition: service_healthy
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:?}
+      KIBANA_PASSWORD: ${KIBANA_PASSWORD:?}
+      SOC_ES_LOGSTASH_USER: ${SOC_ES_LOGSTASH_USER:-soc_logstash}
+      SOC_ES_LOGSTASH_PASSWORD: ${SOC_ES_LOGSTASH_PASSWORD:?}
+    volumes:
+      - certs:/usr/share/elasticsearch/config/certs:ro
+      - ../elasticsearch:/setup:ro
     logging: *logging
 
   es01:
     image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
     depends_on:
-      setup:
-        condition: service_healthy
+      certs:
+        condition: service_completed_successfully
     environment:
       node.name: es01
       cluster.name: soc

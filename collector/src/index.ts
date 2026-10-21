@@ -13,7 +13,11 @@ interface SourceState {
   lastStatus?: 'success' | 'failed';
   lastFinishedAt?: string;
   lastError?: string;
+  consecutiveFailures: number;
 }
+
+/** Falhas seguidas a partir das quais o /health responde 503 (fonte travada). */
+const FAILURES_UNHEALTHY = 3;
 
 async function runOnce(src: SourceConfig, deps: { pool: Pool; graph: GraphClient; log: Logger }): Promise<void> {
   const counters: RunCounters = { fetched: 0, inserted: 0, changed: 0, apiCalls: 0, throttled: 0 };
@@ -39,10 +43,12 @@ async function loop(src: SourceConfig, deps: { pool: Pool; graph: GraphClient; l
     try {
       await runOnce(src, deps);
       state.lastStatus = 'success';
+      state.consecutiveFailures = 0;
       delete state.lastError;
     } catch (err) {
       if (signal.aborted) break;
       state.lastStatus = 'failed';
+      state.consecutiveFailures++;
       state.lastError = errorMessage(err);
       deps.log.error({ source: src.name, err: errorMessage(err) }, 'coleta falhou');
     }
@@ -73,7 +79,7 @@ async function main(): Promise<void> {
 
   const enabled = config.sources.filter((s) => s.enabled);
   if (enabled.length === 0) log.warn('nenhuma fonte habilitada em sources.json');
-  const states = new Map<string, SourceState>(enabled.map((s) => [s.name, {}]));
+  const states = new Map<string, SourceState>(enabled.map((s) => [s.name, { consecutiveFailures: 0 }]));
 
   const server = createServer((req, res) => {
     if (req.url !== '/health') {
@@ -83,8 +89,11 @@ async function main(): Promise<void> {
     pool
       .query('SELECT 1')
       .then(() => {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', sources: Object.fromEntries(states) }));
+        // Fonte falhando seguidamente não avança o checkpoint; sinaliza para o
+        // monitoramento antes que os dados saiam da retenção do Defender.
+        const stuck = [...states].filter(([, s]) => s.consecutiveFailures >= FAILURES_UNHEALTHY).map(([n]) => n);
+        res.writeHead(stuck.length ? 503 : 200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ status: stuck.length ? 'source_failing' : 'ok', stuck, sources: Object.fromEntries(states) }));
       })
       .catch((err: unknown) => {
         res.writeHead(503, { 'content-type': 'application/json' });

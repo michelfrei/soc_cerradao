@@ -103,19 +103,28 @@ describe('incidentes e alertas', () => {
 });
 
 describe('parseSources', () => {
-  const query = 'T | where Timestamp >= datetime({{start}}) and Timestamp < datetime({{end}})';
+  const query = 'DeviceEvents | where Timestamp >= datetime({{start}}) and Timestamp < datetime({{end}})';
 
   it('carrega o arquivo de fontes do repositório', async () => {
     const { readFileSync } = await import('node:fs');
     const raw: unknown = JSON.parse(readFileSync(new URL('../config/sources.json', import.meta.url), 'utf8'));
     const sources = parseSources(raw, (f) => readFileSync(new URL(`../queries/${f}`, import.meta.url), 'utf8'));
-    expect(sources.map((s) => s.name)).toEqual(['incidents', 'alerts', 'hunting.devicelogonevents', 'hunting.asr']);
+    expect(sources.map((s) => s.name)).toEqual([
+      'incidents', 'alerts', 'hunting.devicelogonevents', 'hunting.asr', 'reconcile.devicelogonevents', 'reconcile.asr',
+    ]);
   });
 
   it('exige os marcadores de período na consulta', () => {
     const raw = { sources: [{ name: 'h', type: 'hunting', table: 'DeviceEvents', queryFile: 'x.kql' }] };
     expect(() => parseSources(raw, () => 'DeviceEvents | take 10')).toThrow(/\{\{start\}\}/);
     expect(parseSources(raw, () => query)).toHaveLength(1);
+  });
+
+  it('rejeita consulta que lê tabela diferente da declarada', () => {
+    const raw = { sources: [{ name: 'h', type: 'hunting', table: 'DeviceLogonEvents', queryFile: 'x.kql' }] };
+    const asr = '// comentário\nDeviceEvents\n| where Timestamp >= datetime({{start}}) and Timestamp < datetime({{end}})';
+    expect(() => parseSources(raw, () => asr)).toThrow(/DeviceEvents/);
+    expect(parseSources(raw, () => asr.replace('DeviceEvents', 'DeviceLogonEvents'))).toHaveLength(1);
   });
 
   it('rejeita lookback acima da retenção do Advanced Hunting', () => {

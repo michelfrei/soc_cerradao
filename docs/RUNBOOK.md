@@ -110,10 +110,13 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Ordem esperada: `setup` gera certificados e termina com `Exited (0)`; `es01`, `kibana`
-e `logstash` ficam `healthy`; `collector` fica `healthy` após conectar ao banco.
+Ordem esperada: `certs` gera os certificados e termina com `Exited (0)`; `es01` fica
+`healthy`; `setup` cria usuários e templates e termina com `Exited (0)`; `kibana` e
+`logstash` ficam `healthy`; `collector` fica `healthy` após conectar ao banco.
+`certs` e `setup` são de execução única: ficar `Exited (0)` é o normal.
 
 ```bash
+docker compose logs certs          # "Certificados prontos"
 docker compose logs setup          # deve terminar com "Setup concluído"
 docker compose logs -f collector   # "coleta concluída" para incidents e alerts
 docker compose logs -f logstash
@@ -157,6 +160,7 @@ Critérios de aceite desta etapa:
 | Atualização no Defender gera nova versão | Altere status/atribuição de um incidente de teste e confira `security_object_version` |
 | Dados pesquisáveis no Kibana | Índices `soc-incidents` e `soc-alerts` com os mesmos totais |
 | Reinício não perde progresso | `docker compose restart collector logstash` e conferir que o checkpoint continua |
+| Reboot da VM não perde nada | `systemctl is-enabled docker` = `enabled`; `sudo reboot`; depois `docker compose ps` com tudo `healthy` e a coleta retomada |
 
 ## 7. Habilitar Advanced Hunting (depois da etapa 6)
 
@@ -168,20 +172,62 @@ Critérios de aceite desta etapa:
 
 Os eventos aparecem em `soc-events-devicelogonevents-AAAA.MM` e `soc-events-deviceevents-AAAA.MM`.
 
+A primeira linha não comentada do `.kql` precisa ser a tabela declarada em `table`
+no `sources.json`; caso contrário o coletor recusa iniciar.
+
+**Reconciliação.** As fontes `reconcile.*` repetem a mesma consulta a cada 6 h
+olhando as últimas 24 h, para capturar eventos que chegam atrasados ao Defender
+(servidor offline, sensor com fila). Eventos já gravados são ignorados pela chave
+determinística; o campo `inserted` dessas fontes mostra quantos atrasados foram recuperados.
+
 ## 8. Operação
 
 | Tarefa | Comando |
 |---|---|
 | Situação da coleta | `SELECT * FROM soc.v_collector_status;` |
 | Execuções com falha | `SELECT * FROM soc.collector_run WHERE status = 'failed' ORDER BY id DESC LIMIT 20;` |
-| Reindexar um período | `SELECT soc.republish_events('DeviceLogonEvents', '2026-10-01', '2026-10-02');` (como `soc_owner`) |
+| Coletor `unhealthy` | Uma fonte falhou 3 vezes seguidas e não está avançando: `curl -s localhost:8080/health` dentro do container ou `SELECT * FROM soc.v_collector_status;` |
+| Reindexar eventos de um período | `CALL soc.republish_events('DeviceLogonEvents', '2026-10-01', '2026-10-08');` (como `postgres`, fora de transação; confirma um dia por vez) |
+| Reindexar incidentes/alertas | `SELECT soc.republish_objects('incident');` e `SELECT soc.republish_objects('alert');` |
 | Recoletar desde uma data | `UPDATE soc.collector_checkpoint SET watermark = '<data>' WHERE source = '<fonte>';` e reiniciar o coletor (o Advanced Hunting só retém 30 dias) |
-| Limpar publicações antigas | `SET ROLE soc_owner; SELECT soc.purge_publication('7 days');` |
+| Limpar publicações antigas | Leia o txid confirmado pelo Logstash: `cat /srv/soc/logstash-data/soc_publication_last_run.yml` (VM-Docker). Depois, na VM-PG: `SELECT soc.purge_publication(<txid>, '7 days');` |
 | Documentos rejeitados | DLQ do Logstash em `/srv/soc/logstash-data/dead_letter_queue` |
-| Atualizar templates do ES | edite `elasticsearch/` e rode `docker compose run --rm setup` |
+| Atualizar templates do ES | edite `elasticsearch/` e rode `docker compose run --rm setup` (vale para índices criados depois; os do mês corrente mantêm o mapeamento anterior) |
+| Atualizar a Elastic Stack | Snapshot do ES antes; troque `STACK_VERSION` (mesma major, sem pular minors não suportadas); `docker compose up -d --build` |
+| Trocar a senha do `elastic` | `docker compose exec es01 bin/elasticsearch-reset-password -u elastic -i` e depois atualize `ELASTIC_PASSWORD` no `.env` (o `.env` sozinho não muda a senha após a primeira subida) |
+| Disco do ES | `GET _cat/allocation?v` no Kibana Dev Tools; acima de 85 % o ES deixa de alocar e acima de 95 % bloqueia escrita |
 
-Backup (próxima etapa do projeto): `pg_dump`/pgBackRest da VM-PG e snapshots do
-Elasticsearch em `ES_SNAPSHOT_DIR`, ambos com destino fora das VMs.
+### Backup — obrigatório antes de operações destrutivas
+
+O backup automatizado é a próxima etapa do projeto. Até lá, **antes** de `DROP`,
+`docker compose down -v`, nova migração ou atualização de versão:
+
+```bash
+# VM-PG: dump do banco para fora da VM
+sudo -u postgres pg_dump -Fc -d soc -f /tmp/soc-$(date -u +%Y%m%dT%H%M%SZ).dump
+# copie o arquivo para o repositório de backup e apague o /tmp
+
+# VM-Docker: cópia da CA (o volume ca_private é a única cópia da chave da CA)
+docker run --rm -v soc_ca_private:/ca:ro -v "$PWD":/out alpine tar czf /out/soc-ca-private.tgz -C /ca .
+```
+
+Guarde `soc-ca-private.tgz`, o `docker/.env` e os arquivos de `docker/secrets/` em
+cofre de senhas ou repositório protegido, nunca no Git.
+
+### Exposição do Kibana
+
+O Docker publica portas sem passar pelo ufw. Por padrão o Kibana escuta em todas as
+interfaces (`KIBANA_BIND=0.0.0.0`). Restrinja com `KIBANA_BIND=<IP da VM>` e com
+regras no firewall de rede (ou na cadeia `DOCKER-USER` do iptables) liberando a
+porta 5601 só para a rede dos analistas.
+
+### Mudança de IP de uma VM
+
+- VM-PG: atualize `SOC_PG_HOST` no `.env` e rode `docker compose up -d collector logstash`.
+- VM-Docker: rode de novo `setup-postgres.sh` com o novo `DOCKER_HOST_IP`; atualize
+  `SOC_PUBLIC_IP`/`KIBANA_PUBLIC_URL` no `.env` e regenere os certificados
+  (`docker compose stop es01 kibana logstash && docker volume rm soc_certs`, mantendo
+  `soc_ca_private`, e `docker compose up -d`).
 
 ## 9. Problemas comuns
 
@@ -197,7 +243,11 @@ Elasticsearch em `ES_SNAPSHOT_DIR`, ambos com destino fora das VMs.
 ## 10. Reversão
 
 - Stack: `docker compose down` (mantém os dados em `/srv/soc` e volumes).
-  `docker compose down -v` também apaga certificados e dados do Kibana.
+- `docker compose down -v` **apaga a CA**: gera uma nova na próxima subida, e a CA
+  importada nas estações deixa de valer. Só use com a cópia de `soc_ca_private` feita
+  (seção 8, Backup).
 - PostgreSQL: comandos exibidos ao final do `setup-postgres.sh` (restauram o
-  `pg_hba.conf` anterior e removem `conf.d/10-soc.conf`).
-- Banco: `DROP DATABASE soc;` e os papéis `soc_*` (somente se quiser recomeçar do zero).
+  `pg_hba.conf` anterior e removem `conf.d/10-soc.conf`). Regras do ufw: `sudo ufw status numbered`
+  e `sudo ufw delete <n>`.
+- Banco: **somente após `pg_dump`** (seção 8), `DROP DATABASE soc;` e os papéis `soc_*`.
+- Dados do Elasticsearch/Logstash no host: `/srv/soc/*` (apague só depois de um snapshot).
