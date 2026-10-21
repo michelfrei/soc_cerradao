@@ -4,3 +4,4 @@
 DeviceEvents
 | where Timestamp >= datetime({{start}}) and Timestamp < datetime({{end}})
 | where ActionType startswith "Asr"
+| where DeviceName contains "srv" or DeviceName contains "fisico"

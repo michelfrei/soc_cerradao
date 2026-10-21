@@ -1,6 +1,7 @@
-// Autenticações nos dispositivos (Frente 1 e Frente 4).
-// {{start}} e {{end}} são preenchidos pelo coletor em UTC; o fim é exclusivo.
-// Para o piloto, restrinja aos servidores escolhidos descomentando a linha abaixo.
-DeviceLogonEvents
+// Eventos de regras ASR (Frente 3): auditoria e bloqueio.
+// O Advanced Hunting registra eventos ASR amostrados (processo único por hora);
+// trate as contagens como "eventos observados", não como total de tentativas.
+DeviceEvents
 | where Timestamp >= datetime({{start}}) and Timestamp < datetime({{end}})
-// | where DeviceName in~ ("srv01.dominio.local", "srv02.dominio.local")
+| where ActionType startswith "Asr"
+| where DeviceName contains "srv" or DeviceName contains "fisico"
