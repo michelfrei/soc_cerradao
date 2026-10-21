@@ -154,7 +154,7 @@ if [[ -n "${ADMIN_CIDR:-}" ]]; then
         "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'soc_admins') THEN CREATE ROLE soc_admins NOLOGIN; END IF; END \$\$;"
 fi
 
-"$DIR/migrate.sh"
+bash "$DIR/migrate.sh"
 
 cat <<EOF
 
