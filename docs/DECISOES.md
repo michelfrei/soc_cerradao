@@ -60,6 +60,11 @@ Reindexar o mesmo período sobrescreve os mesmos documentos. A unicidade de
 ## D5 — Checkpoint na mesma transação dos dados
 
 - Hunting: cada janela grava eventos, publicação e checkpoint numa transação.
+  Quando a resposta atinge `maxRows`, a janela é dividida ao meio e cada parte é
+  gravada assim que chega (memória limitada a uma resposta). O checkpoint vai na
+  transação da última parte, portanto só avança depois de todas gravadas.
+- Reconciliação: fontes `reconcile.*` percorrem as mesmas consultas com 24 h de
+  atraso, em janelas de 1 h, recuperando eventos que chegam tarde ao Defender.
 - Incidentes/alertas: cada página em sua transação; o checkpoint avança somente
   na transação da última página. Uma falha no meio repete a coleta inteira, sem
   duplicar, porque versões são identificadas pelo hash.

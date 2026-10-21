@@ -2,8 +2,11 @@
 // Rodam só quando SOC_TEST_PG_HOST está definido (ver scripts/test-integration.ps1).
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ensurePartitions, insertEvents, setCheckpoint, getCheckpoint, upsertObjects, withTransaction } from '../src/db.js';
-import { toEventRow } from '../src/sources/hunting.js';
+import { ensurePartitions, insertEvents, setCheckpoint, getCheckpoint, upsertObjects, withTransaction, type RunCounters } from '../src/db.js';
+import { parseSources, type HuntingSourceConfig } from '../src/config.js';
+import type { GraphClient } from '../src/graph/client.js';
+import type { Logger } from '../src/logger.js';
+import { collectHunting, toEventRow } from '../src/sources/hunting.js';
 import { toObjectRow } from '../src/sources/objects.js';
 
 const host = process.env.SOC_TEST_PG_HOST;
@@ -112,6 +115,44 @@ describe.skipIf(!host)('PostgreSQL (integração)', () => {
       a.release();
       b.release();
     }
+  });
+
+  it('divide a janela, grava cada parte e só então avança o checkpoint', async () => {
+    // Graph simulado: um evento por minuto; respostas com >= maxRows forçam a divisão.
+    const queries: string[] = [];
+    const graph = {
+      async request(_m: string, _p: string, stats: { apiCalls: number }, body: { Query: string }) {
+        stats.apiCalls++;
+        queries.push(body.Query);
+        const [, a, b] = /datetime\((.+?)\).*datetime\((.+?)\)/.exec(body.Query)!;
+        const results = [];
+        for (let t = Date.parse(a!); t < Date.parse(b!); t += 60_000) {
+          results.push({ Timestamp: new Date(t).toISOString(), DeviceId: 'split', ReportId: t, ActionType: 'LogonSuccess' });
+        }
+        return { results };
+      },
+    } as unknown as GraphClient;
+    const log = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger;
+    const src = {
+      ...parseSources(
+        { sources: [{ name: 'test.split', type: 'hunting', table: 'DeviceLogonEvents', queryFile: 'x.kql',
+          initialLookbackHours: 2, ingestionLagMinutes: 0, overlapMinutes: 0, maxWindowMinutes: 120,
+          minWindowMinutes: 1, maxRows: 100, maxWindowsPerRun: 1 }] },
+        () => 'DeviceLogonEvents | where Timestamp >= datetime({{start}}) and Timestamp < datetime({{end}})',
+      )[0]!,
+    } as HuntingSourceConfig;
+    const counters: RunCounters = { fetched: 0, inserted: 0, changed: 0, apiCalls: 0, throttled: 0 };
+
+    await collectHunting(src, { pool: collector, graph, log }, counters);
+
+    // 120 min com maxRows 100: a primeira resposta (120) é descartada e a janela vira 2 x 60.
+    expect(queries.length).toBe(3);
+    expect(counters.inserted).toBe(120);
+    expect(counters.fetched).toBe(120);
+    const cp = await getCheckpoint(collector, 'test.split');
+    expect(cp?.toISOString()).toBe(counters.windowEnd!.toISOString());
+    const n = await collector.query("SELECT count(*)::int AS n FROM soc.raw_event WHERE device_id = 'split'");
+    expect(n.rows[0]!.n).toBe(120);
   });
 
   it('o usuário do Logstash só lê a publicação', async () => {

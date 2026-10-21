@@ -70,42 +70,8 @@ export async function collectHunting(
 ): Promise<void> {
   const { pool, graph, log } = deps;
 
-  const fetchRange = async (from: Date, to: Date): Promise<Record<string, unknown>[]> => {
-    const minutes = (to.getTime() - from.getTime()) / 60_000;
-    let rows: Record<string, unknown>[] | undefined;
-    try {
-      const res = (await graph.request('POST', '/security/runHuntingQuery', counters, {
-        Query: renderQuery(src.query, from, to),
-      })) as { results?: unknown };
-      if (!Array.isArray(res.results)) throw new Error('resposta do runHuntingQuery sem "results"');
-      rows = res.results as Record<string, unknown>[];
-      if (rows.length < src.maxRows) return rows;
-    } catch (err) {
-      if (!isLimitError(err)) throw err;
-      log.warn({ source: src.name, minutes, err: (err as Error).message }, 'limite do Advanced Hunting; dividindo janela');
-    }
-    if (minutes / 2 < src.minWindowMinutes) {
-      throw new WindowTooLarge(
-        `${src.name}: janela de ${minutes} min ainda excede maxRows (${src.maxRows}) ou os limites da API; ` +
-          'reduza a consulta ou ajuste minWindowMinutes/maxRows',
-      );
-    }
-    log.info({ source: src.name, minutes, rows: rows?.length }, 'dividindo janela');
-    const mid = new Date(from.getTime() + (to.getTime() - from.getTime()) / 2);
-    const left = await fetchRange(from, mid);
-    const right = await fetchRange(mid, to);
-    return left.concat(right);
-  };
-
-  for (let i = 0; i < src.maxWindowsPerRun; i++) {
-    const w = nextWindow(await getCheckpoint(pool, src.name), new Date(), src);
-    if (!w) break;
-    counters.windowStart ??= w.queryStart;
-    counters.windowEnd = w.end;
-
-    const raw = await fetchRange(w.queryStart, w.end);
-    counters.fetched += raw.length;
-
+  /** Converte, garante as partições e grava; o checkpoint, se houver, vai na mesma transação. */
+  const store = async (raw: Record<string, unknown>[], checkpoint: Date | undefined): Promise<void> => {
     const rows: EventRow[] = [];
     for (const r of raw) {
       try {
@@ -114,7 +80,6 @@ export async function collectHunting(
         log.error({ source: src.name, err: (err as Error).message }, 'linha ignorada: formato inesperado');
       }
     }
-
     if (rows.length > 0) {
       let min = parseTimestamp(rows[0]!.ts);
       let max = min;
@@ -127,11 +92,55 @@ export async function collectHunting(
       // vira 00:00:00 do mês seguinte) e a partição precisa existir.
       await ensurePartitions(pool, min, new Date(max.getTime() + 1000));
     }
-
     await withTransaction(pool, async (client) => {
       counters.inserted += await insertEvents(client, src.name, src.table, rows);
-      await setCheckpoint(client, src.name, w.end);
+      if (checkpoint) await setCheckpoint(client, src.name, checkpoint);
     });
-    log.debug({ source: src.name, from: w.queryStart, to: w.end, rows: rows.length }, 'janela gravada');
+  };
+
+  /**
+   * Consulta [from, to) e grava. Se o resultado atingir maxRows (ou a API recusar
+   * pelo limite), divide ao meio e grava cada metade assim que ela chega, sem
+   * acumular a janela inteira em memória. O checkpoint segue para a última
+   * metade, então só avança depois que todas as partes foram gravadas.
+   */
+  const processRange = async (from: Date, to: Date, checkpoint: Date | undefined): Promise<void> => {
+    const minutes = (to.getTime() - from.getTime()) / 60_000;
+    let returned: number | undefined;
+    try {
+      const res = (await graph.request('POST', '/security/runHuntingQuery', counters, {
+        Query: renderQuery(src.query, from, to),
+      })) as { results?: unknown };
+      if (!Array.isArray(res.results)) throw new Error('resposta do runHuntingQuery sem "results"');
+      const rows = res.results as Record<string, unknown>[];
+      if (rows.length < src.maxRows) {
+        counters.fetched += rows.length;
+        await store(rows, checkpoint);
+        return;
+      }
+      returned = rows.length;
+    } catch (err) {
+      if (!isLimitError(err)) throw err;
+      log.warn({ source: src.name, minutes, err: (err as Error).message }, 'limite do Advanced Hunting; dividindo janela');
+    }
+    if (minutes / 2 < src.minWindowMinutes) {
+      throw new WindowTooLarge(
+        `${src.name}: janela de ${minutes} min ainda excede maxRows (${src.maxRows}) ou os limites da API; ` +
+          'reduza a consulta ou ajuste minWindowMinutes/maxRows',
+      );
+    }
+    log.info({ source: src.name, minutes, rows: returned }, 'dividindo janela');
+    const mid = new Date(from.getTime() + (to.getTime() - from.getTime()) / 2);
+    await processRange(from, mid, undefined);
+    await processRange(mid, to, checkpoint);
+  };
+
+  for (let i = 0; i < src.maxWindowsPerRun; i++) {
+    const w = nextWindow(await getCheckpoint(pool, src.name), new Date(), src);
+    if (!w) break;
+    counters.windowStart ??= w.queryStart;
+    counters.windowEnd = w.end;
+    await processRange(w.queryStart, w.end, w.end);
+    log.debug({ source: src.name, from: w.queryStart, to: w.end }, 'janela gravada');
   }
 }

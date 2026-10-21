@@ -175,10 +175,12 @@ Os eventos aparecem em `soc-events-devicelogonevents-AAAA.MM` e `soc-events-devi
 A primeira linha não comentada do `.kql` precisa ser a tabela declarada em `table`
 no `sources.json`; caso contrário o coletor recusa iniciar.
 
-**Reconciliação.** As fontes `reconcile.*` repetem a mesma consulta a cada 6 h
-olhando as últimas 24 h, para capturar eventos que chegam atrasados ao Defender
-(servidor offline, sensor com fila). Eventos já gravados são ignorados pela chave
-determinística; o campo `inserted` dessas fontes mostra quantos atrasados foram recuperados.
+**Reconciliação.** As fontes `reconcile.*` repetem a mesma consulta, em janelas de
+1 h, com 24 h de atraso (`ingestionLagMinutes: 1440`), para capturar eventos que
+chegam atrasados ao Defender (servidor offline, sensor com fila). Rodam de hora em
+hora. Eventos já gravados são ignorados pela chave determinística; o campo
+`inserted` dessas fontes mostra quantos atrasados foram recuperados. Eventos com
+mais de 24 h de atraso exigem recoleta manual (seção 8).
 
 ## 8. Operação
 
