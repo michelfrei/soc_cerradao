@@ -152,7 +152,16 @@ for f in "$SETUP"/ilm/*.json; do
 done
 
 echo "Component template: soc-mappings"
-es PUT /_component_template/soc-mappings --data-binary @"$SETUP/templates/component-soc-mappings.json" >/dev/null
+MAPPINGS="$SETUP/mappings/soc-mappings.json"
+{ printf '{"template":{"mappings":'; cat "$MAPPINGS"; printf '}}'; } > "$tmp"
+es PUT /_component_template/soc-mappings --data-binary @"$tmp" >/dev/null
+
+# Índices já existentes recebem os campos novos (somente inclusão; o ES recusa
+# mudança de tipo). Documentos antigos só ganham os campos novos se republicados.
+if es GET '/_cat/indices/soc-*?h=index' 2>/dev/null | grep -q .; then
+    echo "Atualizando mapeamento dos índices soc-* existentes"
+    es PUT '/soc-*/_mapping' --data-binary @"$MAPPINGS" >/dev/null
+fi
 
 for f in "$SETUP"/templates/index-*.json; do
     name="$(basename "$f" .json | sed 's/^index-//')"

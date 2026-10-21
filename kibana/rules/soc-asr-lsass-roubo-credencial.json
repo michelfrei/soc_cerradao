@@ -1,0 +1,65 @@
+{
+  "rule_id": "soc-asr-lsass-roubo-credencial",
+  "name": "SOC - ASR: acesso suspeito à memória do LSASS",
+  "description": "A regra ASR de bloqueio de roubo de credenciais do LSASS registrou um evento (auditoria ou bloqueio). Um processo tentou acessar a memória do lsass.exe, técnica usada para extrair credenciais.",
+  "type": "query",
+  "index": [
+    "soc-events-*"
+  ],
+  "risk_score": 73,
+  "severity": "high",
+  "interval": "10m",
+  "from": "now-30m",
+  "enabled": true,
+  "tags": [
+    "SOC",
+    "SOC-observacao",
+    "Frente 3",
+    "Frente 1",
+    "ASR",
+    "Defender",
+    "Credenciais"
+  ],
+  "author": [
+    "SOC Usina Cerradão"
+  ],
+  "license": "",
+  "false_positives": [
+    "Antivírus/EDR de terceiros, agentes de backup, monitoramento ou inventário que abrem handle do LSASS.",
+    "Ferramentas de diagnóstico (procdump, Process Explorer) usadas pela TI."
+  ],
+  "threat": [
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0006",
+        "name": "Credential Access",
+        "reference": "https://attack.mitre.org/tactics/TA0006/"
+      },
+      "technique": [
+        {
+          "id": "T1003",
+          "name": "OS Credential Dumping",
+          "reference": "https://attack.mitre.org/techniques/T1003/",
+          "subtechnique": [
+            {
+              "id": "T1003.001",
+              "name": "LSASS Memory",
+              "reference": "https://attack.mitre.org/techniques/T1003/001/"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "references": [],
+  "max_signals": 100,
+  "version": 1,
+  "actions": [],
+  "exceptions_list": [],
+  "note": "## Triagem\n- Identifique o processo iniciador (process.name, process.command_line, process.parent.name, file.hash.sha256).\n- Processo desconhecido, em pasta de usuário/temporária ou com linha de comando de dump: tratar como incidente.\n- Verifique logons recentes no host (quem estava conectado) e alertas em soc-alerts.",
+  "language": "kuery",
+  "query": "event.dataset : \"defender.deviceevents\" and soc.asr.rule : \"LsassCredentialTheft\"",
+  "timestamp_override": "event.ingested",
+  "timestamp_override_fallback_disabled": false
+}

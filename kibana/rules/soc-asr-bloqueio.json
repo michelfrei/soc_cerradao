@@ -1,0 +1,50 @@
+{
+  "rule_id": "soc-asr-bloqueio",
+  "name": "SOC - Regra ASR bloqueou atividade",
+  "description": "Uma regra de Redução da Superfície de Ataque (ASR) do Defender bloqueou uma atividade no servidor. Exclui as regras tratadas em detecções específicas (LsassCredentialTheft e PsexecWmiChildProcess).",
+  "type": "query",
+  "index": [
+    "soc-events-*"
+  ],
+  "risk_score": 47,
+  "severity": "medium",
+  "interval": "10m",
+  "from": "now-30m",
+  "enabled": true,
+  "tags": [
+    "SOC",
+    "SOC-observacao",
+    "Frente 3",
+    "ASR",
+    "Defender"
+  ],
+  "author": [
+    "SOC Usina Cerradão"
+  ],
+  "license": "",
+  "false_positives": [
+    "Ferramentas administrativas legítimas ou aplicações de negócio que disparam a regra ASR (ex.: macros, scripts de instalação).",
+    "Softwares de atualização/instalação executando binários de pastas temporárias."
+  ],
+  "threat": [
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0002",
+        "name": "Execution",
+        "reference": "https://attack.mitre.org/tactics/TA0002/"
+      },
+      "technique": []
+    }
+  ],
+  "references": [],
+  "max_signals": 100,
+  "version": 1,
+  "actions": [],
+  "exceptions_list": [],
+  "note": "## Triagem\n- Veja soc.asr.rule, file.path/file.name e process.command_line/process.parent.name.\n- Confirme se o processo é legítimo (fornecedor, assinatura, hash em file.hash.sha256).\n- Bloqueio recorrente de aplicação legítima: avaliar exclusão no Defender (fora do escopo desta regra) ou exceção aqui.",
+  "language": "kuery",
+  "query": "event.dataset : \"defender.deviceevents\" and soc.asr.mode : \"block\" and not soc.asr.rule : (\"LsassCredentialTheft\" or \"PsexecWmiChildProcess\")",
+  "timestamp_override": "event.ingested",
+  "timestamp_override_fallback_disabled": false
+}

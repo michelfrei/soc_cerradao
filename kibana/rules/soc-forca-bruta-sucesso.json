@@ -1,0 +1,94 @@
+{
+  "rule_id": "soc-forca-bruta-sucesso",
+  "name": "SOC - Logon bem-sucedido após várias falhas da mesma conta",
+  "description": "Sequência de 5 ou mais falhas de logon de uma conta seguidas de logon bem-sucedido da mesma conta (em qualquer servidor coberto) em até 30 minutos. Pode indicar força bruta ou password spraying bem-sucedido.",
+  "type": "eql",
+  "index": [
+    "soc-events-*"
+  ],
+  "risk_score": 73,
+  "severity": "high",
+  "interval": "10m",
+  "from": "now-2h",
+  "enabled": true,
+  "tags": [
+    "SOC",
+    "SOC-observacao",
+    "Frente 1",
+    "Logon",
+    "Forca bruta"
+  ],
+  "author": [
+    "SOC Usina Cerradão"
+  ],
+  "license": "",
+  "false_positives": [
+    "Usuário que errou a senha várias vezes e depois acertou.",
+    "Aplicação com senha antiga que foi atualizada logo em seguida.",
+    "Desbloqueio de conta pelo service desk seguido de logon."
+  ],
+  "threat": [
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0006",
+        "name": "Credential Access",
+        "reference": "https://attack.mitre.org/tactics/TA0006/"
+      },
+      "technique": [
+        {
+          "id": "T1110",
+          "name": "Brute Force",
+          "reference": "https://attack.mitre.org/techniques/T1110/",
+          "subtechnique": [
+            {
+              "id": "T1110.001",
+              "name": "Password Guessing",
+              "reference": "https://attack.mitre.org/techniques/T1110/001/"
+            },
+            {
+              "id": "T1110.003",
+              "name": "Password Spraying",
+              "reference": "https://attack.mitre.org/techniques/T1110/003/"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0001",
+        "name": "Initial Access",
+        "reference": "https://attack.mitre.org/tactics/TA0001/"
+      },
+      "technique": [
+        {
+          "id": "T1078",
+          "name": "Valid Accounts",
+          "reference": "https://attack.mitre.org/techniques/T1078/",
+          "subtechnique": [
+            {
+              "id": "T1078.002",
+              "name": "Domain Accounts",
+              "reference": "https://attack.mitre.org/techniques/T1078/002/"
+            },
+            {
+              "id": "T1078.003",
+              "name": "Local Accounts",
+              "reference": "https://attack.mitre.org/techniques/T1078/003/"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "references": [],
+  "max_signals": 100,
+  "version": 1,
+  "actions": [],
+  "exceptions_list": [],
+  "note": "## Triagem\n- Compare source.ip das falhas e do sucesso; origem diferente ou externa aumenta a suspeita.\n- Verifique event.reason das falhas (senha errada vs. conta bloqueada).\n- Confirme com o usuário e, se suspeito, avalie troca de senha (fora do modo observação, com autorização).",
+  "language": "eql",
+  "query": "sequence by user.name with maxspan=30m\n  [any where event.dataset == \"defender.devicelogonevents\" and event.outcome == \"failure\" and user.name != null and not endsWith(user.name, \"$\") and (winlog.logon.type == null or winlog.logon.type not in (\"Service\", \"Batch\"))] with runs=5\n  [any where event.dataset == \"defender.devicelogonevents\" and event.outcome == \"success\" and user.name != null and not endsWith(user.name, \"$\") and (winlog.logon.type == null or winlog.logon.type not in (\"Service\", \"Batch\"))]"
+}

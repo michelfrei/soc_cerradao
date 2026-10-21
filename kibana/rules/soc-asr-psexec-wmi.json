@@ -1,0 +1,92 @@
+{
+  "rule_id": "soc-asr-psexec-wmi",
+  "name": "SOC - ASR: processo criado por PsExec ou WMI",
+  "description": "A regra ASR que monitora criação de processos a partir de PsExec ou WMI registrou um evento (auditoria ou bloqueio). Execução remota por PsExec/WMI é comum em movimentação lateral.",
+  "type": "query",
+  "index": [
+    "soc-events-*"
+  ],
+  "risk_score": 47,
+  "severity": "medium",
+  "interval": "10m",
+  "from": "now-30m",
+  "enabled": true,
+  "tags": [
+    "SOC",
+    "SOC-observacao",
+    "Frente 3",
+    "Frente 4",
+    "ASR",
+    "Defender",
+    "Movimentacao lateral"
+  ],
+  "author": [
+    "SOC Usina Cerradão"
+  ],
+  "license": "",
+  "false_positives": [
+    "Ferramentas de gerenciamento (SCCM, inventário, monitoramento) que executam comandos via WMI.",
+    "Administradores usando PsExec em manutenção."
+  ],
+  "threat": [
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0002",
+        "name": "Execution",
+        "reference": "https://attack.mitre.org/tactics/TA0002/"
+      },
+      "technique": [
+        {
+          "id": "T1047",
+          "name": "Windows Management Instrumentation",
+          "reference": "https://attack.mitre.org/techniques/T1047/"
+        },
+        {
+          "id": "T1569",
+          "name": "System Services",
+          "reference": "https://attack.mitre.org/techniques/T1569/",
+          "subtechnique": [
+            {
+              "id": "T1569.002",
+              "name": "Service Execution",
+              "reference": "https://attack.mitre.org/techniques/T1569/002/"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0008",
+        "name": "Lateral Movement",
+        "reference": "https://attack.mitre.org/tactics/TA0008/"
+      },
+      "technique": [
+        {
+          "id": "T1021",
+          "name": "Remote Services",
+          "reference": "https://attack.mitre.org/techniques/T1021/",
+          "subtechnique": [
+            {
+              "id": "T1021.002",
+              "name": "SMB/Windows Admin Shares",
+              "reference": "https://attack.mitre.org/techniques/T1021/002/"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "references": [],
+  "max_signals": 100,
+  "version": 1,
+  "actions": [],
+  "exceptions_list": [],
+  "note": "## Triagem\n- Veja process.command_line, process.parent.name e o arquivo executado.\n- Correlacione com logons de rede no mesmo host.name minutos antes (quem e de onde).\n- Ferramenta de gestão conhecida e recorrente: criar exceção por process.name/linha de comando.",
+  "language": "kuery",
+  "query": "event.dataset : \"defender.deviceevents\" and soc.asr.rule : \"PsexecWmiChildProcess\"",
+  "timestamp_override": "event.ingested",
+  "timestamp_override_fallback_disabled": false
+}

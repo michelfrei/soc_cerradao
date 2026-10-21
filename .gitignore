@@ -1,6 +1,6 @@
 # Dependências e build
 node_modules/
-dist/
+collector/dist/
 coverage/
 
 # Segredos: nunca versionar

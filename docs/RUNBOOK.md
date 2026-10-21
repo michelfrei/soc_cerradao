@@ -182,6 +182,33 @@ hora. Eventos já gravados são ignorados pela chave determinística; o campo
 `inserted` dessas fontes mostra quantos atrasados foram recuperados. Eventos com
 mais de 24 h de atraso exigem recoleta manual (seção 8).
 
+## 7.1 Dashboards e detecções (Kibana via código)
+
+O serviço `kibana-setup` (execução única, depois que o Kibana fica saudável) importa:
+
+| Item | Origem no repositório |
+|---|---|
+| Data views `SOC - Eventos`, `SOC - Incidentes`, `SOC - Alertas`, `SOC - Histórico` | `kibana/build.mjs` |
+| Dashboards `SOC - Visão geral`, `SOC - Acessos e movimentação`, `SOC - ASR` | `kibana/build.mjs` |
+| `soc-events-*` nos índices padrão do Elastic Security | `kibana/setup.sh` |
+| 8 regras de detecção em modo observação (sem notificação) | `kibana/rules/*.json` — ver `docs/DETECCOES.md` |
+
+Os arquivos importados ficam em `kibana/dist/` e são gerados por `node kibana/build.mjs`
+(o `scripts/validate.ps1` falha se estiverem desatualizados). Para reaplicar depois de
+alterar dashboards ou regras: `docker compose run --rm kibana-setup`. A importação
+sobrescreve objetos com os mesmos ids; edições feitas na interface nesses objetos são perdidas —
+para personalizar, use **Save as** com outro nome.
+
+Data views criadas manualmente antes desta versão podem ficar duplicadas (mesmo nome);
+apague as antigas em **Stack Management → Data Views**.
+
+Regras: em **Security → Rules** filtre pela tag `SOC`. Alertas em **Security → Alerts**.
+Para desligar uma regra, desative-a na interface (a próxima importação a reativa) ou
+mude `"enabled": false` no JSON e reimporte.
+
+**Laboratório:** `scripts/lab/dados-sinteticos.sql` e `scripts/lab/cenarios-deteccao.sql`
+geram dados fictícios para testar dashboards e regras. **Nunca rode em produção.**
+
 ## 8. Operação
 
 | Tarefa | Comando |
@@ -239,6 +266,7 @@ porta 5601 só para a rede dos analistas.
 | `no pg_hba.conf entry` | IP de origem diferente de `DOCKER_HOST_IP` (NAT/rota) ou `sslmode` desativado |
 | `401`/`403` no Graph | Secret expirado, permissão sem consentimento administrativo ou tenant errado |
 | `throttled` crescendo | Reduza `GRAPH_MAX_CONCURRENCY` ou aumente `intervalSeconds` |
+| Logstash não indexa nada após recriar o banco | O checkpoint do Logstash (`/srv/soc/logstash-data/soc_publication_last_run.yml`) é de outro banco e está à frente dos txids novos: `docker compose stop logstash`, apague o arquivo, `docker compose up -d logstash` |
 | Publicação parada | Transação longa aberta no PostgreSQL segurando o xmin: `SELECT pid, xact_start, state FROM pg_stat_activity WHERE backend_xid IS NOT NULL OR backend_xmin IS NOT NULL;` |
 | `es01` não sobe | `vm.max_map_count`, permissões de `/srv/soc/esdata` (1000:0) ou falta de RAM |
 

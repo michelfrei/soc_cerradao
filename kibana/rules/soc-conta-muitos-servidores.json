@@ -1,0 +1,106 @@
+{
+  "rule_id": "soc-conta-muitos-servidores",
+  "name": "SOC - Conta autenticando em muitos servidores em janela curta",
+  "description": "Uma mesma conta (não máquina) obteve logon de rede ou RDP bem-sucedido em 5 ou mais servidores distintos dentro da janela da regra (aprox. 70 min). Padrão compatível com movimentação lateral ou varredura com credencial válida.",
+  "type": "threshold",
+  "index": [
+    "soc-events-*"
+  ],
+  "risk_score": 73,
+  "severity": "high",
+  "interval": "10m",
+  "from": "now-70m",
+  "enabled": true,
+  "tags": [
+    "SOC",
+    "SOC-observacao",
+    "Frente 4",
+    "Logon",
+    "Movimentacao lateral"
+  ],
+  "author": [
+    "SOC Usina Cerradão"
+  ],
+  "license": "",
+  "false_positives": [
+    "Contas de serviço de backup, antivírus, monitoramento, inventário ou deploy (SCCM/Intune, scanners de vulnerabilidade).",
+    "Administradores aplicando patches ou manutenções em lote.",
+    "Logons de rede rotineiros de usuários em vários servidores de arquivos/impressão/controladores de domínio."
+  ],
+  "threat": [
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0008",
+        "name": "Lateral Movement",
+        "reference": "https://attack.mitre.org/tactics/TA0008/"
+      },
+      "technique": [
+        {
+          "id": "T1021",
+          "name": "Remote Services",
+          "reference": "https://attack.mitre.org/techniques/T1021/",
+          "subtechnique": [
+            {
+              "id": "T1021.001",
+              "name": "Remote Desktop Protocol",
+              "reference": "https://attack.mitre.org/techniques/T1021/001/"
+            },
+            {
+              "id": "T1021.002",
+              "name": "SMB/Windows Admin Shares",
+              "reference": "https://attack.mitre.org/techniques/T1021/002/"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0001",
+        "name": "Initial Access",
+        "reference": "https://attack.mitre.org/tactics/TA0001/"
+      },
+      "technique": [
+        {
+          "id": "T1078",
+          "name": "Valid Accounts",
+          "reference": "https://attack.mitre.org/techniques/T1078/",
+          "subtechnique": [
+            {
+              "id": "T1078.002",
+              "name": "Domain Accounts",
+              "reference": "https://attack.mitre.org/techniques/T1078/002/"
+            },
+            {
+              "id": "T1078.003",
+              "name": "Local Accounts",
+              "reference": "https://attack.mitre.org/techniques/T1078/003/"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "references": [],
+  "max_signals": 100,
+  "version": 1,
+  "actions": [],
+  "exceptions_list": [],
+  "note": "## Triagem\n- Liste os host.name e source.ip envolvidos (Investigar em linha do tempo).\n- Verifique se a conta é de serviço conhecida; se for, crie exceção por user.name.\n- Logons a partir de uma única origem incomum em sequência rápida aumentam a suspeita.",
+  "language": "kuery",
+  "query": "event.dataset : \"defender.devicelogonevents\" and event.outcome : \"success\" and winlog.logon.type : (\"Network\" or \"RemoteInteractive\") and user.name : * and not user.name : *$ and not user.domain : (\"NT AUTHORITY\" or \"nt authority\") and not user.name : (\"ANONYMOUS LOGON\" or \"anonymous logon\")",
+  "threshold": {
+    "field": [
+      "user.name"
+    ],
+    "value": 5,
+    "cardinality": [
+      {
+        "field": "host.name",
+        "value": 5
+      }
+    ]
+  }
+}

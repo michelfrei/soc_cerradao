@@ -11,19 +11,18 @@ PostgreSQL → Logstash → Elasticsearch / Kibana (Elastic Security).
 | `postgres/` | Preparação da VM do PostgreSQL 18, papéis e migrações versionadas |
 | `logstash/` | Imagem com driver JDBC, pipeline e consulta incremental |
 | `elasticsearch/` | Setup de certificados, usuários, ILM e templates de índice |
+| `kibana/` | Dashboards e data views (`build.mjs`), regras de detecção (`rules/`) e importação (`setup.sh`) |
 | `docker/` | `compose.yml`, `.env.example`, segredos e preparação da VM do Docker |
-| `scripts/` | Validação local com Docker Desktop |
-| `docs/` | [Runbook](docs/RUNBOOK.md) e [decisões técnicas](docs/DECISOES.md) |
+| `scripts/` | Validação local com Docker Desktop; `lab/` com dados sintéticos para laboratório |
+| `docs/` | [Runbook](docs/RUNBOOK.md), [decisões técnicas](docs/DECISOES.md) e [detecções](docs/DETECCOES.md) |
 
 ## Situação
 
-Fase 1 do piloto: fundação e indexação.
-
-- Incidentes e alertas habilitados por padrão.
-- `DeviceLogonEvents` e eventos ASR já implementados, mas desabilitados até a
-  validação da primeira coleta (ver runbook, seção 7).
-- Ainda não incluídos: regras de detecção, painéis, Grafana, backup automatizado,
-  CI e frentes de movimentação lateral e IA.
+- Coleta: incidentes, alertas, `DeviceLogonEvents` (servidores) e ASR, com reconciliação de 24 h.
+- Kibana: dashboards de visão geral, acessos/movimentação e ASR; 8 regras de detecção
+  em modo observação (frentes 1, 3 e 4).
+- Ainda não incluídos: backup automatizado, Grafana, CI, `DeviceProcessEvents` /
+  `DeviceNetworkEvents` e a frente de IA.
 
 ## Validação local
 

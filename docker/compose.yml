@@ -122,6 +122,20 @@ services:
       retries: 120
     logging: *logging
 
+  # Execução única: data views, dashboards, índices do Security e regras de detecção.
+  kibana-setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    command: ["bash", "/kibana/setup.sh"]
+    depends_on:
+      kibana:
+        condition: service_healthy
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+    volumes:
+      - certs:/usr/share/elasticsearch/config/certs:ro
+      - ../kibana:/kibana:ro
+    logging: *logging
+
   logstash:
     build:
       context: ../logstash

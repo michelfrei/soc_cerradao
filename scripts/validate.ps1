@@ -139,7 +139,12 @@ GRAPH_CLIENT_ID=00000000-0000-0000-0000-000000000000
 
     Invoke-Step 'Scripts shell: sintaxe e shellcheck' {
         docker run --rm -v "${root}:/src:ro" -w /src koalaman/shellcheck:v0.10.0 `
-            -S warning postgres/setup-postgres.sh postgres/migrate.sh elasticsearch/setup.sh docker/host/prepare-docker-host.sh
+            -S warning postgres/setup-postgres.sh postgres/migrate.sh elasticsearch/setup.sh docker/host/prepare-docker-host.sh kibana/setup.sh
+    }
+
+    Invoke-Step 'Kibana: pacote de dashboards e regras atualizado' {
+        # Falha se kibana/dist não corresponder a kibana/build.mjs e kibana/rules.
+        docker run --rm -v "${root}:/repo:ro" -w /repo $NodeImage node kibana/build.mjs --check
     }
 }
 finally {
