@@ -197,4 +197,11 @@ for f in "$SETUP"/templates/index-*.json; do
     es PUT "/_index_template/${name}" --data-binary @"$f" >/dev/null
 done
 
+# soc-insights é estado atual (um índice, sem data no nome). Criado vazio para o
+# data view e o dashboard terem os campos antes do primeiro cálculo de insights.
+if ! es GET '/_cat/indices/soc-insights?h=index' 2>/dev/null | grep -q .; then
+    echo "Criando índice vazio soc-insights"
+    es PUT /soc-insights >/dev/null
+fi
+
 echo "Setup concluído"

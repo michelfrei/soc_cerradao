@@ -143,8 +143,11 @@ DeviceTvmSecureConfigurationAssessmentKB
 - O Defender documenta fim de suporte apenas para produtos Windows; para os demais
   a lacuna aparece em `data_gaps`. Os valores exatos de `EndOfSupportStatus` não são
   documentados: o coletor reconhece "software"/"version"/"upcoming" no texto.
-- Snapshots acima de 10.000 linhas por fonte são recusados; com escopo de
-  servidores o limite é conservador.
+- Snapshots TVM são consultados em partes por `hash(DeviceId)` (`partitions` em
+  `sources.json`: 8 para vulnerabilidades e configurações, 2 para fim de suporte).
+  Cada parte aceita até 10.000 linhas; se qualquer parte atingir o limite, o
+  snapshot inteiro é recusado e o erro pede para aumentar `partitions` (até 64).
+  O Advanced Hunting limita cada consulta a 100.000 linhas e 64 MB.
 - O acompanhamento operacional (quem executa, prazo) não é escrito neste índice:
   cada recálculo regrava o documento. Use Cases do Kibana referenciando o
   `insight_id`.

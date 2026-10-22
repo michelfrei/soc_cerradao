@@ -72,6 +72,8 @@ const SnapshotSource = BaseSource.extend({
   queryFile: z.string().regex(/^[a-z0-9_.-]+\.kql$/),
   intervalSeconds: z.number().int().min(60).default(21600),
   maxRows: z.number().int().min(100).max(10_000).default(10_000),
+  // Consultas por hash(DeviceId): cada parte respeita maxRows; o snapshot só vale com todas.
+  partitions: z.number().int().min(1).max(64).default(1),
 });
 
 const InsightsSource = BaseSource.extend({
@@ -209,6 +211,9 @@ export function parseSources(raw: unknown, readQuery: (file: string) => string):
       throw new Error(`${s.name}: minWindowMinutes maior que maxWindowMinutes`);
     }
     const query = readQuery(s.queryFile);
+    if (s.type === 'snapshot' && s.partitions > 1 && !query.includes('{{partition}}')) {
+      throw new Error(`${s.queryFile}: partitions > 1 exige o marcador {{partition}} na consulta`);
+    }
     if (s.type === 'hunting' && (!query.includes('{{start}}') || !query.includes('{{end}}'))) {
       throw new Error(`${s.queryFile}: a consulta precisa conter {{start}} e {{end}}`);
     }

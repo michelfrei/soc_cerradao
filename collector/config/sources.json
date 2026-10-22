@@ -67,7 +67,8 @@
       "queryFile": "devicetvmsoftwarevulnerabilities.kql",
       "enabled": true,
       "intervalSeconds": 21600,
-      "maxRows": 10000
+      "maxRows": 10000,
+      "partitions": 8
     },
     {
       "name": "snapshot.devicetvmsecureconfigurationassessment",
@@ -76,7 +77,8 @@
       "queryFile": "devicetvmsecureconfigurationassessment.kql",
       "enabled": true,
       "intervalSeconds": 21600,
-      "maxRows": 10000
+      "maxRows": 10000,
+      "partitions": 8
     },
     {
       "name": "snapshot.devicetvmsoftwareinventory",
@@ -85,7 +87,8 @@
       "queryFile": "devicetvmsoftwareinventory.kql",
       "enabled": true,
       "intervalSeconds": 21600,
-      "maxRows": 10000
+      "maxRows": 10000,
+      "partitions": 2
     },
     {
       "name": "insights.remediation",

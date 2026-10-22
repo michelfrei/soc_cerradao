@@ -2,12 +2,13 @@
 // Linhas sem EndOfSupportStatus não entram: ausência não comprova suporte vigente.
 DeviceTvmSoftwareInventory
 | where (DeviceName contains "srv" or DeviceName contains "fisico")
-    and DeviceName !contains "note" and DeviceName !contains "micro"
+    and DeviceName !contains "note" and DeviceName !contains "micro" {{partition}}
 | where isnotempty(EndOfSupportStatus)
 | project DeviceId, DeviceName, OSPlatform, OSVersion, OSArchitecture,
           SoftwareVendor, SoftwareName, SoftwareVersion, EndOfSupportStatus, EndOfSupportDate,
           ProductCodeCpe = column_ifexists("ProductCodeCpe", "")
 // Linhas repetidas idênticas são unidas; divergentes fazem o coletor recusar o snapshot.
 | distinct *
-// >=10000 é recusado pelo coletor, antes de qualquer alteração de estado.
+// O marcador de partição vira o filtro hash(DeviceId) de cada parte (sources.json "partitions").
+// >=10000 por parte é recusado pelo coletor, antes de qualquer alteração de estado.
 | take 10001

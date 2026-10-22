@@ -1,7 +1,7 @@
 // Estado de vulnerabilidades reportado pelo Defender; não é uma série temporal de eventos.
 DeviceTvmSoftwareVulnerabilities
 | where (DeviceName contains "srv" or DeviceName contains "fisico")
-    and DeviceName !contains "note" and DeviceName !contains "micro"
+    and DeviceName !contains "note" and DeviceName !contains "micro" {{partition}}
 | join kind=leftouter (
     DeviceTvmSoftwareVulnerabilitiesKB
     | summarize arg_max(LastModifiedTime, *) by CveId
@@ -11,5 +11,6 @@ DeviceTvmSoftwareVulnerabilities
           SoftwareVendor, SoftwareName, SoftwareVersion, CveId, VulnerabilitySeverityLevel,
           RecommendedSecurityUpdate, RecommendedSecurityUpdateId, CveTags,
           CvssScore, IsExploitAvailable, VulnerabilityDescription, PublishedDate, LastModifiedTime
-// >=10000 é recusado pelo coletor. O sentinela extra nunca permite snapshot truncado.
+// O marcador de partição vira o filtro hash(DeviceId) de cada parte (sources.json "partitions").
+// >=10000 por parte é recusado pelo coletor. O sentinela extra nunca permite snapshot truncado.
 | take 10001

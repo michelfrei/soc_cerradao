@@ -40,8 +40,15 @@ docker compose run --rm kibana-setup
 docker compose ps
 ```
 
-O setup cria o component template `soc-insights-mappings`, o template do índice
-`soc-insights` e acrescenta os campos de fim de suporte em `soc-posture`. O
+O setup cria o component template `soc-insights-mappings`, o template e o
+índice vazio `soc-insights` (o dashboard mostra zero em vez de "Field … was not
+found" até o primeiro cálculo) e acrescenta os campos de fim de suporte em
+`soc-posture`.
+
+Os snapshots TVM são consultados em partes por dispositivo (`partitions` em
+`collector/config/sources.json`), cada uma com até 10.000 linhas. Se o log
+mostrar "limite 10000 atingido … aumente partitions", dobre o valor da fonte
+indicada e reinicie o coletor. O
 Logstash precisa ser recriado para carregar o `normalize.rb` novo.
 
 O primeiro cálculo ocorre poucos segundos após a subida, mas só tem sucesso

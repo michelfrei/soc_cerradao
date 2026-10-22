@@ -38,10 +38,16 @@ export function postureKey(table: SnapshotSourceConfig['table'], row: Record<str
   return sha256(canonicalJson([table.toLowerCase(), device, ...identity]));
 }
 
+/** Parte k de N por hash(DeviceId): um dispositivo fica sempre na mesma parte. */
+export function partitionQuery(query: string, partitions: number, k: number): string {
+  return query.replace('{{partition}}', partitions > 1 ? `| where hash(DeviceId, ${partitions}) == ${k}` : '');
+}
+
 /** Valida completude antes de filtrar escopo, deduplicar ou tocar no PostgreSQL. */
 export function snapshotRows(src: SnapshotSourceConfig, raw: unknown, snapshot: Date): PostureRow[] {
   if (!Array.isArray(raw)) throw new Error(`${src.name}: Graph não retornou lista results`);
-  if (raw.length >= src.maxRows) throw new Error(`${src.name}: limite ${src.maxRows} atingido; snapshot incompleto recusado`);
+  // Cada parte já foi conferida contra maxRows; o total é o limite somado das partes.
+  if (raw.length >= src.maxRows * src.partitions) throw new Error(`${src.name}: limite ${src.maxRows * src.partitions} atingido; snapshot incompleto recusado`);
   const rows = new Map<string, PostureRow>();
   for (const item of raw) {
     if (item === null || typeof item !== 'object' || Array.isArray(item)) throw new Error(`${src.name}: linha inválida`);
@@ -106,8 +112,21 @@ export async function collectSnapshot(
   counters.windowStart = snapshot;
   counters.windowEnd = snapshot;
   // Tabela ausente, licença insuficiente e erro da API propagam à execução da fonte.
-  const response = await deps.graph.request('POST', '/security/runHuntingQuery', counters, { Query: src.query });
-  const results = completeHuntingResults(response, src.maxRows, src.name);
+  // Qualquer parte incompleta recusa o snapshot inteiro, antes de tocar no banco.
+  const results: unknown[] = [];
+  for (let k = 0; k < src.partitions; k++) {
+    const label = src.partitions > 1 ? `${src.name} (parte ${k + 1}/${src.partitions})` : src.name;
+    const response = await deps.graph.request('POST', '/security/runHuntingQuery', counters,
+      { Query: partitionQuery(src.query, src.partitions, k) });
+    try {
+      results.push(...completeHuntingResults(response, src.maxRows, label));
+    } catch (err) {
+      if (/limite/.test((err as Error).message) && src.partitions < 64) {
+        throw new Error(`${(err as Error).message}; aumente partitions em sources.json (atual ${src.partitions})`);
+      }
+      throw err;
+    }
+  }
   const rows = snapshotRows(src, results, snapshot);
   counters.fetched = results.length;
   const result = await withTransaction(deps.pool, (client) => storeSnapshot(client, src, rows, snapshot));

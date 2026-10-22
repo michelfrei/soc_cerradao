@@ -6,7 +6,7 @@ import type { GraphClient } from '../src/graph/client.js';
 import { completeHuntingResults } from '../src/graph/hunting-results.js';
 import type { Logger } from '../src/logger.js';
 import { eventKey } from '../src/sources/hunting.js';
-import { collectSnapshot, postureKey, snapshotRows } from '../src/sources/snapshot.js';
+import { collectSnapshot, partitionQuery, postureKey, snapshotRows } from '../src/sources/snapshot.js';
 
 const at = new Date('2026-10-21T15:00:00Z');
 const vulnerability = { DeviceId: 'd1', DeviceName: 'SRV-APP', CveId: 'CVE-2026-0001',
@@ -130,5 +130,55 @@ describe('identidade e completude de postura', () => {
     await expect(collectSnapshot(source(), deps, counters())).rejects.toThrow(/snapshot incompleto/);
     deps.graph = { request: async () => ({ results: [], stats: { isPartial: true } }) } as unknown as GraphClient;
     await expect(collectSnapshot(source(), deps, counters())).rejects.toThrow(/recusado/);
+  });
+});
+
+describe('snapshot particionado por dispositivo', () => {
+  const partitioned = (partitions: number) => parseSources({ sources: [{ name: 'snapshot.p', type: 'snapshot',
+    table: 'DeviceTvmSoftwareVulnerabilities', queryFile: 'q.kql', maxRows: 100, partitions }] },
+  () => 'DeviceTvmSoftwareVulnerabilities | where DeviceName contains "srv" {{partition}} | take 101')[0] as SnapshotSourceConfig;
+  const counters = (): RunCounters => ({ fetched: 0, inserted: 0, changed: 0, apiCalls: 0, throttled: 0 });
+
+  it('marcador vira filtro hash(DeviceId) por parte; sem partição some', () => {
+    expect(partitionQuery('T {{partition}} | take 1', 4, 3)).toBe('T | where hash(DeviceId, 4) == 3 | take 1');
+    expect(partitionQuery('T {{partition}} | take 1', 1, 0)).toBe('T  | take 1');
+    expect(() => parseSources({ sources: [{ name: 's', type: 'snapshot', table: 'DeviceTvmSoftwareVulnerabilities',
+      queryFile: 'q.kql', partitions: 2 }] }, () => 'DeviceTvmSoftwareVulnerabilities | take 1')).toThrow(/\{\{partition\}\}/);
+  });
+
+  it('fontes TVM do repositório são particionadas e as consultas têm o marcador', () => {
+    const sources = parseSources(JSON.parse(readFileSync(new URL('../config/sources.json', import.meta.url), 'utf8')),
+      (f) => readFileSync(new URL(`../queries/${f}`, import.meta.url), 'utf8'));
+    for (const name of ['snapshot.devicetvmsoftwarevulnerabilities', 'snapshot.devicetvmsecureconfigurationassessment']) {
+      const s = sources.find((x) => x.name === name) as SnapshotSourceConfig;
+      expect(s.partitions).toBeGreaterThan(1);
+      expect(s.query.match(/\{\{partition\}\}/g)).toHaveLength(1);
+    }
+  });
+
+  it('soma as partes acima do limite de uma consulta e recusa se qualquer parte atingir o limite', async () => {
+    const src = partitioned(3);
+    const queries: string[] = [];
+    const part = (k: number, n: number) => Array.from({ length: n }, (_, i) => ({ ...vulnerability, DeviceId: `d${k}-${i}` }));
+    const graph = { request: async (_m: string, _p: string, _c: RunCounters, body: { Query: string }) => {
+      queries.push(body.Query);
+      const k = Number(/== (\d+)/.exec(body.Query)![1]);
+      return { results: part(k, 90) };
+    } } as unknown as GraphClient;
+    const store: unknown[] = [];
+    const pool = { connect: async () => ({ query: async (sql: string, params?: unknown[]) => {
+      if (/jsonb_to_recordset/.test(sql)) store.push(JSON.parse(params![1] as string));
+      return { rows: [{ changed: 270, watermark: null }], rowCount: 0 };
+    }, release: () => undefined }) } as unknown as Pool;
+    const c = counters();
+    await collectSnapshot(src, { pool, graph, log: {} as Logger }, c);
+    expect(queries).toEqual([0, 1, 2].map((k) => `DeviceTvmSoftwareVulnerabilities | where DeviceName contains "srv" | where hash(DeviceId, 3) == ${k} | take 101`));
+    expect(c.fetched).toBe(270);
+    expect((store[0] as unknown[]).length).toBe(270);
+
+    const full = { request: async (_m: string, _p: string, _c: RunCounters, body: { Query: string }) =>
+      ({ results: body.Query.includes('== 2') ? part(2, 100) : part(0, 1) }) } as unknown as GraphClient;
+    await expect(collectSnapshot(src, { pool: {} as Pool, graph: full, log: {} as Logger }, counters()))
+      .rejects.toThrow(/parte 3\/3.*aumente partitions/);
   });
 });

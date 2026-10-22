@@ -1,7 +1,7 @@
 // Estado de avaliação; desaparecimento significa apenas que não é mais reportado.
 DeviceTvmSecureConfigurationAssessment
 | where (DeviceName contains "srv" or DeviceName contains "fisico")
-    and DeviceName !contains "note" and DeviceName !contains "micro"
+    and DeviceName !contains "note" and DeviceName !contains "micro" {{partition}}
 | summarize arg_max(Timestamp, *) by DeviceId, ConfigurationId, SOCContextKey=tostring(Context)
 | join kind=leftouter (
     DeviceTvmSecureConfigurationAssessmentKB
@@ -12,5 +12,6 @@ DeviceTvmSecureConfigurationAssessment
           ConfigurationSubcategory, ConfigurationImpact, IsApplicable, IsCompliant, Context,
           IsExpectedUserImpact, ConfigurationName, ConfigurationDescription, RiskDescription,
           ConfigurationBenchmarks, Tags, RemediationOptions
-// >=10000 é recusado pelo coletor, antes de qualquer alteração de estado.
+// O marcador de partição vira o filtro hash(DeviceId) de cada parte (sources.json "partitions").
+// >=10000 por parte é recusado pelo coletor, antes de qualquer alteração de estado.
 | take 10001
