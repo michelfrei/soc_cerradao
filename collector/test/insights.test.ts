@@ -49,21 +49,30 @@ function inputs(p: Partial<InsightInputs>): InsightInputs {
 }
 
 describe('insights de remediação', () => {
-  it('agrupa Windows por KB, sem somar servidores repetidos, e separa CVEs de instâncias', () => {
+  it('agrupa Windows por SO (LCU cumulativa), com KBs como evidência e servidores sem repetição', () => {
     const result = buildInsights(inputs({ vulnerabilities: [
-      windows('d1', 'CVE-2026-0001', '5044281'), windows('d1', 'CVE-2026-0002', '5044281'),
+      windows('d1', 'CVE-2026-0001', '5044281'), windows('d1', 'CVE-2026-0002', '5041578'),
       windows('d2', 'CVE-2026-0001', '5044281'), windows('d3', 'CVE-2026-0003', null),
+      vuln('d1', { SoftwareVendor: 'microsoft', SoftwareName: 'windows_admin_center', SoftwareVersion: '2', CveId: 'CVE-2026-0009' }),
     ] }));
-    const kb = result.find((i) => i.recommendation_ids.includes('KB5044281'))!;
-    expect(kb).toMatchObject({ category: 'windows_update', remediation_type: 'definitive', affected_device_count: 2,
-      cve_count: 2, cve_ids: ['CVE-2026-0001', 'CVE-2026-0002'], affected_device_ids: ['d1', 'd2'] });
-    expect(kb.source.finding_count).toBe(3);
-    expect(kb.expected_outcome).toMatchObject({ finding_reduction: 3, cve_reduction: 2, device_reduction: null });
-    expect(kb.references).toContain('https://support.microsoft.com/help/5044281');
-    expect(kb.remediation_steps.join(' ')).toContain('KB5044281');
-    const noKb = result.find((i) => i.grouping_key === 'windows_update|windows_server_2019|sem-kb')!;
-    expect(noKb.data_gaps).toContain('Defender não informou a atualização recomendada (KB).');
+    const os = result.find((i) => i.category === 'windows_update')!;
+    expect(result.filter((i) => i.category === 'windows_update')).toHaveLength(1);
+    expect(os).toMatchObject({ grouping_key: 'windows_update|windows_server_2019', remediation_type: 'definitive', affected_device_count: 3,
+      cve_count: 3, cve_ids: ['CVE-2026-0001', 'CVE-2026-0002', 'CVE-2026-0003'], affected_device_ids: ['d1', 'd2', 'd3'] });
+    expect(os.recommendation_ids).toEqual(['KB5041578', 'KB5044281']);
+    expect(os.source.finding_count).toBe(4);
+    expect(os.expected_outcome).toMatchObject({ finding_reduction: 4, cve_reduction: 3, device_reduction: null });
+    expect(os.references).toContain('https://support.microsoft.com/help/5044281');
+    expect(os.remediation_steps.join(' ')).toMatch(/cumulativa.*KB5041578, KB5044281/s);
+    expect(os.data_gaps).not.toContain('Defender não informou a atualização recomendada (KB).');
+    expect(result.find((i) => i.grouping_key === 'application_update|microsoft|windows_admin_center')).toBeDefined();
     expect(result).toHaveLength(2);
+  });
+
+  it('Windows Server 2016 registra a dependência da SSU', () => {
+    const [i] = buildInsights(inputs({ vulnerabilities: [vuln('d1', { SoftwareVendor: 'microsoft', SoftwareName: 'windows_server_2016',
+      SoftwareVersion: '10.0.14393', CveId: 'CVE-1', RecommendedSecurityUpdateId: '5000001' })] }));
+    expect(i!.dependencies.join(' ')).toMatch(/Servicing Stack Update/);
   });
 
   it('agrupa aplicativo por fornecedor/produto juntando versões e prioriza exploit + Internet', () => {

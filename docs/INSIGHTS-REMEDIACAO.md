@@ -27,7 +27,7 @@ Cada achado ativo entra em **um único** bloco:
 
 | `category` | Regra de agrupamento | Chave |
 |---|---|---|
-| `windows_update` | CVE em `microsoft/windows_*` (SO) | SO + KB recomendado (`RecommendedSecurityUpdateId`); sem KB → bloco "sem-kb" com lacuna |
+| `windows_update` | CVE do sistema operacional (`microsoft/windows_server_*`, `windows_10/11`…) | SO: a LCU mais recente é cumulativa e trata as CVEs dos KBs anteriores, que ficam em `recommendation_ids` como evidência. Server 2016 registra a dependência da SSU |
 | `application_update` | Demais softwares | fornecedor + produto (todas as versões juntas) |
 | `driver_firmware` | Nome contém firmware/bios/driver (heurística, registrada em `data_gaps`) ou regra do catálogo | fornecedor + produto |
 | `software_replacement` | `EndOfSupportStatus` de software (EOS/Upcoming EOS Software) | fornecedor + produto, inclusive sem CVE ativo |
@@ -89,7 +89,7 @@ Campos na raiz do índice `soc-insights` (mapeamento próprio, `dynamic: false`)
 | `first_seen`, `last_seen`, `resolved_at` | date | |
 
 **`insight_id`** = `ins-` + 32 primeiros hex de `sha256(JSON canônico [category, chave de agrupamento])`.
-A chave é a da tabela de blocos (ex.: `["windows_update","windows_server_2019|KB5044281"]`,
+A chave é a da tabela de blocos (ex.: `["windows_update","windows_server_2019"]`,
 `["application_update","google|chrome"]`, `["gpo_configuration","smb-signing"]`).
 Não depende de dispositivos, CVEs, datas nem do texto: reprocessar atualiza o mesmo
 documento. Muda somente se a ação mudar — por exemplo, um scid em investigação que

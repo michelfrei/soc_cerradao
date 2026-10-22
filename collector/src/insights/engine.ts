@@ -165,8 +165,9 @@ function softwareKey(vendor: string | null, name: string): string {
   return `${vendor ?? ''}|${name}`;
 }
 
+/** Sistema operacional Windows (windows_server_2022, windows_11…); windows_admin_center é aplicativo. */
 function isWindowsOs(vendor: string | null, name: string): boolean {
-  return vendor === 'microsoft' && /^windows(_|$)/.test(name);
+  return vendor === 'microsoft' && /^windows_(server_\d{4}\w*|1[01]|7|8(_1)?)$/.test(name);
 }
 
 type EosStatus = 'eos_software' | 'eos_version' | 'upcoming_software' | 'upcoming_version';
@@ -237,7 +238,7 @@ function classifyBlocks(inputs: InsightInputs): Block[] {
       return block('software_replacement', sw, `Substituir ou remover ${displayVendor} ${displayName} (fim de suporte)`);
     }
     if (isWindowsOs(vendor, name)) {
-      return block('windows_update', name, `Atualizar ${displayName}`);
+      return block('windows_update', name, `Aplicar a atualização cumulativa mais recente em ${displayName}`);
     }
     if (/firmware|bios|driver/.test(name)) {
       return block('driver_firmware', sw, `Atualizar driver/firmware ${displayVendor} ${displayName}`,
@@ -253,16 +254,9 @@ function classifyBlocks(inputs: InsightInputs): Block[] {
     const version = lower(f.payload.SoftwareVersion) ?? '';
     const sw = softwareKey(vendor, name);
     const eos = eosBySoftware.get(`${f.deviceId}|${sw}`) ?? eosByVersion.get(`${f.deviceId}|${sw}|${version}`) ?? null;
-    const b = softwareBlock(vendor, name, text(f.payload.SoftwareVendor) ?? '', text(f.payload.SoftwareName)!, eos);
-    // Windows: um bloco por atualização recomendada (KB) dentro do mesmo SO.
-    if (b.category === 'windows_update') {
-      const update = kb(f.payload.RecommendedSecurityUpdateId);
-      const wb = block('windows_update', `${name}|${update ?? 'sem-kb'}`,
-        update ? `Aplicar ${update} em ${text(f.payload.SoftwareName)}` : `Atualizar ${text(f.payload.SoftwareName)} (KB não informado)`);
-      wb.vulns.push(f);
-    } else {
-      b.vulns.push(f);
-    }
+    // Windows: um bloco por SO. As atualizações de segurança são cumulativas: a mais
+    // recente trata as CVEs dos KBs anteriores, que ficam como evidência.
+    softwareBlock(vendor, name, text(f.payload.SoftwareVendor) ?? '', text(f.payload.SoftwareName)!, eos).vulns.push(f);
   }
 
   // Software sem suporte sem CVE ativo também exige decisão de substituição.
@@ -274,9 +268,7 @@ function classifyBlocks(inputs: InsightInputs): Block[] {
     const b = status === 'eos_software' || status === 'upcoming_software'
       ? softwareBlock(vendor, name, text(f.payload.SoftwareVendor) ?? '', text(f.payload.SoftwareName)!, status)
       : [...blocks.values()].find((x) => x.groupingKey === softwareKey(vendor, name) && x.category !== 'investigation')
-        ?? (isWindowsOs(vendor, name)
-          ? block('windows_update', `${name}|versao-sem-suporte`, `Atualizar ${text(f.payload.SoftwareName)} para versão com suporte`)
-          : softwareBlock(vendor, name, text(f.payload.SoftwareVendor) ?? '', text(f.payload.SoftwareName)!, status));
+        ?? softwareBlock(vendor, name, text(f.payload.SoftwareVendor) ?? '', text(f.payload.SoftwareName)!, status);
     b.eos.push(f);
   }
 
@@ -413,7 +405,8 @@ function buildInsight(b: Block, inputs: InsightInputs, devices: Map<string, Devi
     gpo_configuration: () => entry!.remediation_steps,
     script_manual: () => entry?.remediation_steps ?? [],
     windows_update: () => [
-      kbs.length ? `Aprovar no WSUS/ferramenta de distribuição as atualizações ${kbs.join(', ')} para os servidores do bloco.` : 'Identificar no portal do Defender a atualização cumulativa mais recente para o SO e aprová-la na distribuição existente.',
+      'Aprovar no WSUS/ferramenta de distribuição a atualização cumulativa (LCU) mais recente deste SO: ela inclui as correções dos KBs anteriores.',
+      ...(kbs.length ? [`KBs indicados pelo Defender para as CVEs do bloco (evidência; os anteriores são substituídos pela LCU mais recente): ${kbs.slice(0, 15).join(', ')}${kbs.length > 15 ? ` e mais ${kbs.length - 15}` : ''}.`] : []),
       ...(updateText.length ? [`Atualização indicada pelo Defender: ${updateText.slice(0, 5).join('; ')}.`] : []),
       ...(b.eos.length ? ['Versão sem suporte: planejar atualização para versão com suporte antes de aplicar correções.'] : []),
       'Aplicar primeiro em servidores piloto e respeitar a janela de reinicialização.',
@@ -450,7 +443,7 @@ function buildInsight(b: Block, inputs: InsightInputs, devices: Map<string, Devi
     gpo_configuration: () => entry!.validation_steps,
     script_manual: () => entry?.validation_steps ?? [],
     windows_update: () => [
-      ...(kbs.length ? [`No servidor: Get-HotFix -Id ${kbs[0]} (repetir para cada KB do bloco).`] : []),
+      'No servidor: Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 5 (confirmar a LCU aprovada).',
       'Aguardar o Defender refletir a mudança (software: em geral 2 h) e o próximo snapshot TVM (a cada 6 h); confirmar em soc-posture que as instâncias passaram a no_longer_reported.',
       'Conferir neste insight a queda de affected_device_count; status no_longer_reported indica ausência do achado, não prova de correção.',
     ],
@@ -467,7 +460,7 @@ function buildInsight(b: Block, inputs: InsightInputs, devices: Map<string, Devi
     gpo_configuration: () => entry!.rollback_steps,
     script_manual: () => entry?.rollback_steps ?? [],
     windows_update: () => [
-      kbs[0] ? `Se houver regressão: wusa /uninstall /kb:${kbs[0].replace(/^KB/, '')} (ou Configurações > Atualizações > Desinstalar) e recusar a atualização no WSUS.` : 'Desinstalar a atualização problemática e recusá-la na distribuição.',
+      'Se houver regressão: wusa /uninstall /kb:<número da LCU aplicada> (ou Configurações > Atualizações > Desinstalar) e recusar a atualização no WSUS.',
       'Restaurar snapshot/backup da VM se a desinstalação não for suportada pela atualização.',
     ],
     application_update: () => ['Reinstalar a versão anterior a partir do pacote homologado e registrar o motivo.'],
@@ -563,6 +556,8 @@ function buildInsight(b: Block, inputs: InsightInputs, devices: Map<string, Devi
     dependencies: [
       ...(entry?.dependencies ?? []),
       ...(b.category === 'windows_update' ? ['Servidor de distribuição (WSUS) com a atualização aprovada.'] : []),
+      ...(b.category === 'windows_update' && b.groupingKey === 'windows_server_2016'
+        ? ['Windows Server 2016: instalar antes a Servicing Stack Update (SSU) mais recente indicada na página da LCU.'] : []),
     ],
     expected_outcome: outcome,
     effort,
