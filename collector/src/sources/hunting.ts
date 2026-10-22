@@ -3,6 +3,7 @@ import { ensurePartitions, getCheckpoint, insertEvents, setCheckpoint, withTrans
 import { GraphError, type GraphClient } from '../graph/client.js';
 import type { Logger } from '../logger.js';
 import { addHours, addMinutes, isoUtc, parseTimestamp, sha256 } from '../util.js';
+import { isServerInScope } from '../scope.js';
 
 export interface HuntingWindow {
   /** Início lógico da janela (checkpoint anterior). */
@@ -74,6 +75,10 @@ export async function collectHunting(
   const store = async (raw: Record<string, unknown>[], checkpoint: Date | undefined): Promise<void> => {
     const rows: EventRow[] = [];
     for (const r of raw) {
+      // Defesa local: as fontes de processo/rede seguem o mesmo escopo do KQL.
+      // Não há allowlist do catálogo esperado. Exclusões de nomes prevalecem.
+      if ((src.table === 'DeviceProcessEvents' || src.table === 'DeviceNetworkEvents') &&
+          !isServerInScope(typeof r.DeviceName === 'string' ? r.DeviceName : '')) continue;
       try {
         rows.push(toEventRow(src.table, r));
       } catch (err) {

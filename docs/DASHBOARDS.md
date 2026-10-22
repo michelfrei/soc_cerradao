@@ -2,7 +2,7 @@
 
 O pacote `kibana/dist/objects.ndjson` é gerado por `node kibana/build.mjs` e importado no espaço **SOC**, id `soc`, pelo setup. Os links usam `/s/soc/`; não apontam para o espaço padrão. A importação atualiza os objetos com os mesmos IDs. Personalizações locais devem usar **Salvar como** com outro ID.
 
-## Os cinco painéis
+## Os oito painéis
 
 | Dashboard | Uso |
 |---|---|
@@ -11,12 +11,46 @@ O pacote `kibana/dist/objects.ndjson` é gerado por `node kibana/build.mjs` e im
 | SOC - Investigação por servidor | Seguir host.id e identidade entre logons, origens RDP, falhas e eventos detalhados |
 | SOC - ASR | Auditoria e bloqueio ASR, processo, arquivo, hash e identidade observados |
 | SOC - Cobertura e capacidade | Cadastro esperado versus Defender conhecido; sensores; execuções do coletor; tamanho do PostgreSQL e capacidade do processo/nó ES |
+| SOC - Processos e conexões | Processo criado/iniciador, comandos, conta e endpoints local/remoto; correlação por host.id e process.entity_id |
+| SOC - Exposição e proteção | Exposição reportada pelo Defender, CVEs/software, avaliações de configuração, dados desconhecidos e datas das fontes |
+| SOC - Acessos aos servidores | Visão consolidada (porte do painel Grafana): 9 indicadores, 10 pontos de atenção por severidade, tempo, mapa de calor servidor × hora, rankings, negados agrupados e admin em RDP/console, com controles de filtro |
+
+## Acessos aos servidores
+
+Período padrão: últimas 24 h. Os controles no topo (servidor, conta, tipo de acesso, resultado,
+origem) e qualquer clique em valor de gráfico ou tabela filtram o painel inteiro; os filtros
+podem ser fixados para seguir a outros painéis.
+
+| Ponto de atenção | Critério (além do escopo de servidores) |
+|---|---|
+| 🔴 Acesso de IP público | `source.ip` fora de 10/8, 172.16/12, 192.168/16, 127/8, 169.254/16, ::1, fe80::/10, fc00::/7; tipos Network, RemoteInteractive, NetworkCleartext |
+| 🔴 Possível password spraying | Falhas (exceto Service/Batch), por origem, ordenado por contas distintas |
+| 🟠 Senha em texto claro | `NetworkCleartext`; crítico quando há sucesso |
+| 🟠 Contas bloqueadas | `event.reason: AccountLocked`; coluna de privilégio vem do catálogo de identidades |
+| 🟠 Contas genéricas em RDP/console | `soc.identity.generic` (nome sem domínio: administrator, admin, guest, convidado, suporte, backup, sa, ti… com sufixo numérico opcional) |
+| 🟠 Fora do horário | `soc.time.off_hours`: 22h–6h ou sábado/domingo em Brasília (UTC-3); tipos humanos |
+| 🟠 Rajadas de falha | Falhas por conta, servidor e motivo |
+| 🔵 Contas em muitos servidores | Servidores distintos via rede/RDP (coluna separada só RDP) |
+| 🔵 NewCredentials | `runas /netonly` |
+| 🔵 Contas locais via rede/RDP | `soc.identity.scope: local` com sucesso remoto |
+
+Os campos `soc.time.*` e `soc.identity.generic` são calculados no Logstash (`normalize.rb`).
+Eventos indexados antes da sua introdução só os recebem após `CALL soc.republish_events(...)`.
+Ajuste a lista de contas genéricas ou o horário comercial em `normalize.rb` (`GENERIC_ACCOUNT`,
+`local_time`) conforme a operação — turnos e safra podem tornar o acesso noturno normal.
 
 Eventos e inventário usam o escopo de nomes: contém **srv OU fisico**, exclui **note OU micro**. Eventos antigos fora desse escopo continuam armazenados e podem ser consultados diretamente no Discover. Incidentes e alertas Defender são dados do tenant e não recebem uma restrição artificial por nome de servidor.
 
 ## Tempo e significado dos totais
 
 As views `soc-incidents`, `soc-alerts` e `soc-devices` **não possuem campo de tempo**. Seus cartões e tabelas mostram o estado conhecido inteiro, inclusive um incidente ainda ativo cuja última atualização é antiga. Isso não comprova coleta recente. A view adicional `soc-alerts-timeline` usa `@timestamp` para a distribuição por última atualização conhecida, respeitando o seletor temporal. Histórico de versões continua na view `soc-history`.
+
+A view `soc-posture` também não possui campo de tempo e filtra
+`soc.posture.active:true`. Snapshots completos retiram itens não mais reportados;
+isso não comprova correção. A view `soc-metrics-current`, sem campo de tempo,
+permite consultar a última execução conhecida por fonte mesmo fora do período
+selecionado. Confira status, conclusão, snapshot, data de avaliação e último
+contato do sensor antes de interpretar cartões vazios ou resultados anteriores.
 
 Alertas Defender (`soc-alerts`) vêm da Microsoft. Alertas Elastic (`.alerts-security.alerts-soc`) são resultados das regras executadas no espaço SOC; seus cartões respeitam o período selecionado. Não somar essas duas fontes como incidentes únicos.
 
@@ -43,6 +77,32 @@ PostgreSQL usa `event.dataset:soc.database_capacity` e `soc.metrics.source:datab
 Escolher um período histórico mostra a última amostra daquele período, não o estado de agora. Campo vazio significa ausência de amostra nesse intervalo. Confira o timestamp no Discover antes de tomar decisões de capacidade.
 
 Os gráficos de evolução PostgreSQL e Elasticsearch usam um histograma temporal e **last_value em cada intervalo**. Assim, aumentar a frequência de coleta não aumenta artificialmente o tamanho do banco ou o uso de heap. Intervalos sem amostra não são preenchidos como capacidade zero. A série “Banco total” contém as tabelas exibidas e outros objetos; não deve ser somada às séries por tabela.
+
+## Processos, rede e postura
+
+Em criação de processos, `process.*` representa o processo criado e
+`process.parent.*` seu iniciador. Na rede, `process.*` representa o iniciador da
+conexão. Use `host.id` junto de `process.entity_id` quando disponível; PID pode ser
+reutilizado. Um link de `host.id` abre o Discover na fonte correspondente. Para
+correlacionar outras fontes, aplique o mesmo filtro e confira o período.
+
+IPs e portas de rede usam `soc.network.local_*` e `remote_*`. Essa perspectiva
+não permite inferir direção, bytes, exfiltração ou malícia. Os rankings mostram
+atividade observada; o Defender não fornece um inventário completo de conexões
+ativas por essas tabelas.
+
+Uma vulnerabilidade é armazenada por servidor/CVE/vendor/software/versão. O painel
+separa instâncias de CVEs distintos e servidores distintos; cardinalidades são
+aproximadas. A prioridade high/critical com exploit público disponível não é
+evidência de exploração. Avaliação não aplicável não é falha; booleano ausente é
+desconhecido. `IsInternetFacing` ausente também é desconhecido.
+
+A proteção mostrada inclui saúde do sensor e avaliações TVM, sem exportação
+detalhada das versões de assinatura/motor ou modo AV. Os sinais operacionais de
+contato antigo (24 h) e snapshot antigo (36 h) indicam necessidade de conferir a
+coleta, sem concluir comprometimento. Campos originais permanecem em `defender`.
+
+Ativação e limites das fontes: [DEPLOY-PROCESSOS-EXPOSICAO.md](DEPLOY-PROCESSOS-EXPOSICAO.md).
 
 ## Regras v2 e implantação
 

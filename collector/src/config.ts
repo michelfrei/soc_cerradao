@@ -65,6 +65,14 @@ const InventorySource = BaseSource.extend({
   maxRows: z.number().int().min(100).max(10_000).default(10_000),
 });
 
+const SnapshotSource = BaseSource.extend({
+  type: z.literal('snapshot'),
+  table: z.enum(['DeviceTvmSoftwareVulnerabilities', 'DeviceTvmSecureConfigurationAssessment']),
+  queryFile: z.string().regex(/^[a-z0-9_.-]+\.kql$/),
+  intervalSeconds: z.number().int().min(60).default(21600),
+  maxRows: z.number().int().min(100).max(10_000).default(10_000),
+});
+
 const ExpectedAsset = z.object({
   name: z.string().trim().min(1),
   id: z.string().trim().min(1).optional(),
@@ -90,13 +98,14 @@ export function parseAssets(raw: unknown): ExpectedAssetConfig[] {
 }
 
 const SourcesFile = z.object({
-  sources: z.array(z.discriminatedUnion('type', [ObjectSource, HuntingSource, InventorySource])),
+  sources: z.array(z.discriminatedUnion('type', [ObjectSource, HuntingSource, InventorySource, SnapshotSource])),
 });
 
 export type ObjectSourceConfig = z.infer<typeof ObjectSource>;
 export type HuntingSourceConfig = z.infer<typeof HuntingSource> & { query: string };
 export type InventorySourceConfig = z.infer<typeof InventorySource> & { query: string };
-export type SourceConfig = ObjectSourceConfig | HuntingSourceConfig | InventorySourceConfig;
+export type SnapshotSourceConfig = z.infer<typeof SnapshotSource> & { query: string };
+export type SourceConfig = ObjectSourceConfig | HuntingSourceConfig | InventorySourceConfig | SnapshotSourceConfig;
 
 export type GraphCredential =
   | { kind: 'secret'; clientSecret: string }
@@ -165,10 +174,15 @@ function graphCredential(env: z.infer<typeof EnvSchema>): GraphCredential {
 export function parseSources(raw: unknown, readQuery: (file: string) => string): SourceConfig[] {
   const parsed = SourcesFile.parse(raw);
   const names = new Set<string>();
+  const snapshotTables = new Set<string>();
   return parsed.sources.map((s) => {
     if (names.has(s.name)) throw new Error(`fonte duplicada: ${s.name}`);
     names.add(s.name);
-    if (s.type !== 'hunting' && s.type !== 'inventory') return s;
+    if (s.type === 'snapshot') {
+      if (snapshotTables.has(s.table)) throw new Error(`snapshot duplicado para tabela: ${s.table}`);
+      snapshotTables.add(s.table);
+    }
+    if (s.type !== 'hunting' && s.type !== 'inventory' && s.type !== 'snapshot') return s;
     if (s.type === 'hunting' && s.minWindowMinutes > s.maxWindowMinutes) {
       throw new Error(`${s.name}: minWindowMinutes maior que maxWindowMinutes`);
     }

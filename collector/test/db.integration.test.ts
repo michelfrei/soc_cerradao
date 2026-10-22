@@ -3,12 +3,13 @@
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ensurePartitions, insertEvents, setCheckpoint, getCheckpoint, upsertObjects, withTransaction, type RunCounters } from '../src/db.js';
-import { parseSources, type HuntingSourceConfig, type InventorySourceConfig } from '../src/config.js';
+import { parseSources, type HuntingSourceConfig, type InventorySourceConfig, type SnapshotSourceConfig } from '../src/config.js';
 import type { GraphClient } from '../src/graph/client.js';
 import type { Logger } from '../src/logger.js';
 import { collectHunting, toEventRow } from '../src/sources/hunting.js';
 import { toObjectRow } from '../src/sources/objects.js';
 import { collectInventory } from '../src/sources/inventory.js';
+import { collectSnapshot, snapshotRows, storeSnapshot } from '../src/sources/snapshot.js';
 
 const host = process.env.SOC_TEST_PG_HOST;
 const port = Number(process.env.SOC_TEST_PG_PORT ?? 5432);
@@ -200,5 +201,104 @@ describe.skipIf(!host)('PostgreSQL (integração)', () => {
     expect(Number(JSON.parse(capacity.payload_json).database_bytes)).toBeGreaterThan(0);
     const repeated = await logstash.query(`SELECT doc_id FROM soc.v_telemetry WHERE dataset='database_capacity'`);
     expect(repeated.rows[0].doc_id).toBe(capacity.doc_id);
+  });
+
+  it('snapshot completo publica observados, tombstone somente de recém-ausente e reaparece na mesma identidade', async () => {
+    const src = parseSources({ sources: [{ name: 'test.posture.lifecycle', type: 'snapshot',
+      table: 'DeviceTvmSoftwareVulnerabilities', queryFile: 'tvm.kql', maxRows: 100 }] },
+    () => 'DeviceTvmSoftwareVulnerabilities')[0] as SnapshotSourceConfig;
+    const dataset = src.table.toLowerCase();
+    const first = { DeviceId: 'posture-test-device', DeviceName: 'srv-posture-test', CveId: 'CVE-2026-0001',
+      SoftwareVendor: 'Test', SoftwareName: 'App', SoftwareVersion: '1.0' };
+    const second = { ...first, SoftwareVersion: '2.0' };
+    const t0 = new Date('2026-10-21T10:00:00Z');
+    const t1 = new Date('2026-10-21T11:00:00Z');
+    const t2 = new Date('2026-10-21T12:00:00Z');
+    const t3 = new Date('2026-10-21T13:00:00Z');
+    const save = async (raw: Record<string, unknown>[], at: Date) =>
+      withTransaction(collector, (client) => storeSnapshot(client, src, snapshotRows(src, raw, at), at));
+    expect(await save([first, second], t0)).toEqual({ inserted: 2, changed: 2 });
+    expect(await save([first], t1)).toEqual({ inserted: 0, changed: 2 });
+    const secondKey = snapshotRows(src, [second], t0)[0]!.key;
+    const state = await collector.query('SELECT active, payload FROM soc.posture_state WHERE dataset=$1 AND doc_id=$2', [dataset, secondKey]);
+    expect(state.rows[0]).toMatchObject({ active: false, payload: {
+      SOCActive: false, SOCState: 'no_longer_reported', SOCSnapshotAt: t1.toISOString(),
+    } });
+    // Uma ausência já publicada não ganha data nova a cada snapshot seguinte.
+    expect(await save([first], t2)).toEqual({ inserted: 0, changed: 1 });
+    const oldTombstone = await collector.query('SELECT snapshot_at FROM soc.posture_state WHERE dataset=$1 AND doc_id=$2', [dataset, secondKey]);
+    expect(oldTombstone.rows[0].snapshot_at.toISOString()).toBe(t1.toISOString());
+    expect(await save([first, second], t3)).toEqual({ inserted: 0, changed: 2 });
+    const restored = await collector.query('SELECT active, payload FROM soc.posture_state WHERE dataset=$1 AND doc_id=$2', [dataset, secondKey]);
+    expect(restored.rows[0]).toMatchObject({ active: true, payload: { SOCActive: true, SOCState: 'observed' } });
+    const pub = await logstash.query(`SELECT payload FROM soc.publication WHERE entity='posture' AND dataset=$1 AND doc_id=$2 ORDER BY id`, [dataset, secondKey]);
+    expect(pub.rows.map((r) => r.payload.SOCState)).toEqual(['observed', 'no_longer_reported', 'observed']);
+    await expect(logstash.query('SELECT * FROM soc.posture_state')).rejects.toThrow(/permission denied/);
+  });
+
+  it('falha/limite/parcial e rollback preservam snapshot/checkpoint/publicação; staleguard vale por dataset', async () => {
+    const src = parseSources({ sources: [{ name: 'test.posture.transaction', type: 'snapshot',
+      table: 'DeviceTvmSecureConfigurationAssessment', queryFile: 'tvm.kql', maxRows: 100 }] },
+    () => 'DeviceTvmSecureConfigurationAssessment')[0] as SnapshotSourceConfig;
+    const raw = { DeviceId: 'posture-config-device', DeviceName: 'fisico-posture-test', ConfigurationId: 'scid-test',
+      Timestamp: '2026-10-21T14:00:00.1234567Z', Context: { b: 2, a: 1 }, IsApplicable: true, IsCompliant: false };
+    const t0 = new Date('2026-10-21T14:30:00Z');
+    const dataset = src.table.toLowerCase();
+    const rows = snapshotRows(src, [raw], t0);
+    await withTransaction(collector, (client) => storeSnapshot(client, src, rows, t0));
+    const pubCount = async () => {
+      const result = await logstash.query(`SELECT count(*)::int AS n FROM soc.publication WHERE entity='posture' AND dataset=$1`, [dataset]);
+      return result.rows[0].n;
+    };
+    const before = await pubCount();
+    const t1 = new Date('2026-10-21T15:30:00Z');
+    await expect(withTransaction(collector, async (client) => {
+      await storeSnapshot(client, src, [], t1);
+      throw new Error('falha depois de gravar tombstone');
+    })).rejects.toThrow(/falha depois/);
+    expect(await pubCount()).toBe(before);
+    expect((await getCheckpoint(collector, src.name))?.toISOString()).toBe(t0.toISOString());
+    expect((await collector.query('SELECT active FROM soc.posture_state WHERE dataset=$1 AND doc_id=$2', [dataset, rows[0]!.key])).rows[0].active).toBe(true);
+    // Alias sem checkpoint próprio não pode voltar o estado do dataset.
+    await expect(withTransaction(collector, (client) => storeSnapshot(client, { ...src, name: 'test.posture.alias' }, [],
+      new Date('2026-10-21T13:30:00Z')))).rejects.toThrow(/anterior/);
+    const counters = (): RunCounters => ({ fetched: 0, inserted: 0, changed: 0, apiCalls: 0, throttled: 0 });
+    const log = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger;
+    for (const reply of [
+      { results: Array.from({ length: 100 }, () => raw) },
+      { results: [], error: { code: 'PartialError' } },
+    ]) {
+      const graph = { request: async () => reply } as unknown as GraphClient;
+      await expect(collectSnapshot(src, { pool: collector, graph, log }, counters())).rejects.toThrow(/recusado/);
+    }
+    const graph = { request: async () => { throw new Error('Graph 403 tabela indisponível'); } } as unknown as GraphClient;
+    await expect(collectSnapshot(src, { pool: collector, graph, log }, counters())).rejects.toThrow(/403/);
+    expect(await pubCount()).toBe(before);
+    expect((await getCheckpoint(collector, src.name))?.toISOString()).toBe(t0.toISOString());
+    // Vazio válido publica ausência sem dizer que a configuração foi corrigida.
+    await withTransaction(collector, (client) => storeSnapshot(client, src, [], t1));
+    const final = await collector.query('SELECT payload FROM soc.posture_state WHERE dataset=$1 AND doc_id=$2', [dataset, rows[0]!.key]);
+    expect(final.rows[0].payload).toMatchObject({ SOCState: 'no_longer_reported', SOCActive: false,
+      IsCompliant: false, Timestamp: raw.Timestamp });
+  });
+
+  it('processo/rede validam nomes localmente sem allowlist do inventário', async () => {
+    for (const table of ['DeviceProcessEvents', 'DeviceNetworkEvents']) {
+      const src = parseSources({ sources: [{ name: `test.scope.${table.toLowerCase()}`, type: 'hunting', table,
+        queryFile: 'test.kql', initialLookbackHours: 1, overlapMinutes: 0, ingestionLagMinutes: 0,
+        maxWindowMinutes: 15, maxWindowsPerRun: 1 }] },
+      () => `${table} | where Timestamp >= datetime({{start}}) and Timestamp < datetime({{end}})`)[0] as HuntingSourceConfig;
+      const graph = { request: async () => ({ results: [
+        { DeviceId: `new-${table}`, DeviceName: 'SRV-UNKNOWN-TO-CATALOG', Timestamp: '2026-10-21T14:00:00Z', ReportId: 1 },
+        { DeviceId: `excluded-note-${table}`, DeviceName: 'srv-note', Timestamp: '2026-10-21T14:00:00Z', ReportId: 2 },
+        { DeviceId: `excluded-micro-${table}`, DeviceName: 'fisico-micro', Timestamp: '2026-10-21T14:00:00Z', ReportId: 3 },
+      ] }) } as unknown as GraphClient;
+      const log = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger;
+      const counters: RunCounters = { fetched: 0, inserted: 0, changed: 0, apiCalls: 0, throttled: 0 };
+      await collectHunting(src, { pool: collector, graph, log }, counters);
+      expect(counters.inserted).toBe(1);
+      const result = await collector.query('SELECT device_name FROM soc.raw_event WHERE table_name=$1 AND source=$2', [table, src.name]);
+      expect(result.rows).toEqual([{ device_name: 'SRV-UNKNOWN-TO-CATALOG' }]);
+    }
   });
 });

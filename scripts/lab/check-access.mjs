@@ -28,11 +28,11 @@ export function checkAccess(dir) {
   for(const [user,role]of [['smoke-observer','soc_observer'],['smoke-analyst','soc_analyst'],['smoke-admin','soc_admin']]) {
     expect(request('es','PUT',`/_security/user/${user}`,{password:m.password,roles:[role]}),200,`usuário temporário ${role}`);
     const privileges=expect(request('es','POST','/_security/user/_has_privileges',{
-      cluster:['manage_security'],index:[{names:['soc-events-*'],privileges:['read','write','delete_index']},{names:['.alerts-security.alerts-soc'],privileges:['read']}]
+      cluster:['manage_security'],index:[{names:['soc-events-*'],privileges:['read','write','delete_index']},{names:['soc-posture'],privileges:['read','write','delete_index']},{names:['.alerts-security.alerts-soc'],privileges:['read']}]
     },user),200,`privilégios efetivos ${role}`);
-    if(privileges.cluster.manage_security||!privileges.index['soc-events-*'].read||privileges.index['soc-events-*'].write||privileges.index['soc-events-*'].delete_index||!privileges.index['.alerts-security.alerts-soc'].read)throw new Error(`Permissões incorretas em ${role}`);
+    if(privileges.cluster.manage_security||!privileges.index['soc-events-*'].read||privileges.index['soc-events-*'].write||privileges.index['soc-events-*'].delete_index||!privileges.index['.alerts-security.alerts-soc'].read||!privileges.index['soc-posture'].read||privileges.index['soc-posture'].write||privileges.index['soc-posture'].delete_index)throw new Error(`Permissões incorretas em ${role}`);
     const dashboards=expect(request('kb','GET','/api/saved_objects/_find?type=dashboard&per_page=100',undefined,user),200,`${role} consulta dashboards SOC`);
-    if(dashboards.saved_objects.length!==5)throw new Error('Quantidade inesperada de dashboards');
+    if(dashboards.saved_objects.length!==8)throw new Error('Quantidade inesperada de dashboards');
   }
   expect(request('kb','GET','/api/detection_engine/rules/_find',undefined,'smoke-observer'),403,'observer não gerencia detecções');
   const rules=expect(request('kb','GET','/api/detection_engine/rules/_find?per_page=100',undefined,'smoke-analyst'),200,'analyst consulta regras');

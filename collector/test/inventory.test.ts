@@ -18,7 +18,7 @@ describe('escopo de servidores', () => {
     ['srv-note', false], ['fisico-micro', false], ['sRv-NoTe', false], ['FISICO-MICRO', false], ['dc01', false],
   ])('%s: %s', (name, expected) => expect(isServerInScope(name)).toBe(expected));
 
-  it.each(['devicelogonevents.kql', 'asr.kql', 'deviceinfo.kql'])('KQL %s aplica inclusão e exclusões', (file) => {
+  it.each(['devicelogonevents.kql', 'asr.kql', 'deviceinfo.kql', 'deviceprocessevents.kql', 'devicenetworkevents.kql'])('KQL %s aplica inclusão e exclusões', (file) => {
     const text = readFileSync(new URL(`../queries/${file}`, import.meta.url), 'utf8');
     expect(text).toContain('(DeviceName contains "srv" or DeviceName contains "fisico")');
     expect(text).toContain('and DeviceName !contains "note" and DeviceName !contains "micro"');

@@ -8,6 +8,7 @@ import { createLogger, type Logger } from './logger.js';
 import { collectHunting } from './sources/hunting.js';
 import { collectObjects } from './sources/objects.js';
 import { collectInventory } from './sources/inventory.js';
+import { collectSnapshot } from './sources/snapshot.js';
 import type { ExpectedAssetConfig } from './config.js';
 import { errorMessage } from './util.js';
 
@@ -28,6 +29,7 @@ async function runOnce(src: SourceConfig, deps: { pool: Pool; graph: GraphClient
   try {
     if (src.type === 'hunting') await collectHunting(src, deps, counters);
     else if (src.type === 'inventory') await collectInventory(src, deps, counters);
+    else if (src.type === 'snapshot') await collectSnapshot(src, deps, counters);
     else await collectObjects(src, deps, counters);
     await finishRun(deps.pool, runId, counters);
     deps.log.info({ source: src.name, ms: Date.now() - started, ...counters }, 'coleta concluída');

@@ -1,0 +1,15 @@
+// Estado de vulnerabilidades reportado pelo Defender; não é uma série temporal de eventos.
+DeviceTvmSoftwareVulnerabilities
+| where (DeviceName contains "srv" or DeviceName contains "fisico")
+    and DeviceName !contains "note" and DeviceName !contains "micro"
+| join kind=leftouter (
+    DeviceTvmSoftwareVulnerabilitiesKB
+    | summarize arg_max(LastModifiedTime, *) by CveId
+    | project CveId, CvssScore, IsExploitAvailable, VulnerabilityDescription, PublishedDate, LastModifiedTime
+) on CveId
+| project DeviceId, DeviceName, OSPlatform, OSVersion, OSArchitecture,
+          SoftwareVendor, SoftwareName, SoftwareVersion, CveId, VulnerabilitySeverityLevel,
+          RecommendedSecurityUpdate, RecommendedSecurityUpdateId, CveTags,
+          CvssScore, IsExploitAvailable, VulnerabilityDescription, PublishedDate, LastModifiedTime
+// >=10000 é recusado pelo coletor. O sentinela extra nunca permite snapshot truncado.
+| take 10001

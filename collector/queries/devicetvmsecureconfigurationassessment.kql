@@ -1,0 +1,16 @@
+// Estado de avaliação; desaparecimento significa apenas que não é mais reportado.
+DeviceTvmSecureConfigurationAssessment
+| where (DeviceName contains "srv" or DeviceName contains "fisico")
+    and DeviceName !contains "note" and DeviceName !contains "micro"
+| summarize arg_max(Timestamp, *) by DeviceId, ConfigurationId, SOCContextKey=tostring(Context)
+| join kind=leftouter (
+    DeviceTvmSecureConfigurationAssessmentKB
+    | project ConfigurationId, ConfigurationName, ConfigurationDescription, RiskDescription,
+              ConfigurationBenchmarks, Tags, RemediationOptions
+) on ConfigurationId
+| project Timestamp, DeviceId, DeviceName, OSPlatform, ConfigurationId, ConfigurationCategory,
+          ConfigurationSubcategory, ConfigurationImpact, IsApplicable, IsCompliant, Context,
+          IsExpectedUserImpact, ConfigurationName, ConfigurationDescription, RiskDescription,
+          ConfigurationBenchmarks, Tags, RemediationOptions
+// >=10000 é recusado pelo coletor, antes de qualquer alteração de estado.
+| take 10001

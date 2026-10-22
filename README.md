@@ -18,19 +18,26 @@ PostgreSQL → Logstash → Elasticsearch / Kibana (Elastic Security).
 
 ## Situação
 
-- Coleta: incidentes, alertas, `DeviceLogonEvents`, ASR e inventário horário `DeviceInfo`;
+- Coleta: incidentes, alertas, `DeviceLogonEvents`, ASR, `DeviceProcessEvents`,
+  `DeviceNetworkEvents` e inventário horário `DeviceInfo`;
   eventos com reconciliação de 24 h. Nomes incluem `srv`/`fisico` e excluem
   `note`/`micro`, ignorando maiúsculas; exclusões prevalecem.
 - Identidades: contas qualificadas por domínio/servidor, SID e catálogo opcional
   de classificação. [Contrato de identidades](docs/IDENTIDADES.md).
-- Kibana: espaço `soc`, cinco dashboards, oito regras v2 em observação e perfis
+- Postura: snapshots TVM de vulnerabilidades e avaliações de configuração a cada
+  seis horas; estado atual separado dos eventos, sem apagar resultados por falha.
+- Kibana: espaço `soc`, sete dashboards, oito regras v2 em observação e perfis
   observer/analyst/admin. [Guia das telas](docs/DASHBOARDS.md).
 - Capacidade: snapshots PostgreSQL/Elasticsearch; relatório manual da VM em
   `bash scripts/capacity-report.sh docker` ou `postgres`.
-- Ainda não incluídos: backup automatizado, Grafana, CI, `DeviceProcessEvents` /
-  `DeviceNetworkEvents` e a frente de IA.
+- Ainda não incluídos: backup automatizado, Grafana, CI, exportação detalhada da
+  saúde do antivírus pela API MDE e a frente de IA.
 
-**Atualização de ambiente existente:** siga [DEPLOY-EVOLUCAO.md](docs/DEPLOY-EVOLUCAO.md).
+**Próxima atualização (processos, rede e postura):** siga
+[DEPLOY-PROCESSOS-EXPOSICAO.md](docs/DEPLOY-PROCESSOS-EXPOSICAO.md), com migração 004
+no PostgreSQL antes de ativar o coletor 0.3.0 e os novos dashboards.
+
+**Evolução anterior (identidades/cobertura):** [DEPLOY-EVOLUCAO.md](docs/DEPLOY-EVOLUCAO.md).
 Aplica primeiro a migração 003 no PostgreSQL 18, depois atualiza a VM-Docker.
 O guia inclui isolamento de certificados sem trocar a CA, ativação opcional de
 `verify-full`, transição do espaço default para SOC e reautorização das regras.

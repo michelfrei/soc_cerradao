@@ -1,0 +1,14 @@
+// IPs/portas locais e remotos são observados; não inferir direction, bytes ou volume de tráfego.
+DeviceNetworkEvents
+| where Timestamp >= datetime({{start}}) and Timestamp < datetime({{end}})
+| where (DeviceName contains "srv" or DeviceName contains "fisico")
+    and DeviceName !contains "note" and DeviceName !contains "micro"
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType,
+          LocalIP, LocalPort, LocalIPType, RemoteIP, RemotePort, RemoteIPType, RemoteUrl, Protocol,
+          InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessFolderPath,
+          InitiatingProcessCommandLine, InitiatingProcessCreationTime,
+          InitiatingProcessSHA1, InitiatingProcessSHA256,
+          InitiatingProcessUniqueId = column_ifexists("InitiatingProcessUniqueId", ""),
+          InitiatingProcessAccountName, InitiatingProcessAccountDomain, InitiatingProcessAccountSid,
+          InitiatingProcessAccountUpn, InitiatingProcessParentId, InitiatingProcessParentFileName,
+          InitiatingProcessParentCreationTime, AdditionalFields

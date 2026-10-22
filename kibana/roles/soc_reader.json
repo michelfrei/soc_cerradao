@@ -1,5 +1,5 @@
 {
-  "description": "Leitura dos dashboards SOC; sem alteracao de dados, regras ou configuracoes.",
+  "description": "Leitura dos sete dashboards SOC, incluindo processos, rede e soc-posture por soc-*. Sem alteracao de dados, regras ou configuracoes.",
   "elasticsearch": {
     "cluster": [],
     "indices": [

@@ -1,5 +1,5 @@
 {
-  "description": "Administrador funcional SOC: dashboards, consultas, regras, alertas e Cases no espaco SOC. Sem superuser ou gestao de usuarios/cluster.",
+  "description": "Administrador funcional SOC: sete dashboards, consultas de eventos e soc-posture, regras, alertas e Cases no espaco SOC. Sem superuser ou gestao de usuarios/cluster.",
   "elasticsearch": {
     "cluster": ["monitor", "manage_own_api_key"],
     "indices": [

@@ -1,5 +1,5 @@
 {
-  "description": "Analista SOC: investiga dados, faz triagem de alertas e gerencia Cases no espaco SOC. Nao edita regras.",
+  "description": "Analista SOC: investiga eventos e soc-posture por soc-*, faz triagem de alertas e gerencia Cases no espaco SOC. Nao edita regras.",
   "elasticsearch": {
     "cluster": [],
     "indices": [

@@ -22,14 +22,21 @@ const DATA_VIEWS = [
   { id: 'soc-alerts-timeline', title: 'soc-alerts', name: 'SOC - Alertas Defender - última atualização' },
   { id: 'soc-history', title: 'soc-*-history-*', name: 'SOC - Histórico' },
   { id: 'soc-devices', title: 'soc-devices', name: 'SOC - Inventário conhecido', timeless: true },
+  { id: 'soc-posture', title: 'soc-posture', name: 'SOC - Postura atual TVM', timeless: true },
   { id: 'soc-metrics', title: 'soc-metrics-*', name: 'SOC - Coleta e capacidade' },
+  { id: 'soc-metrics-current', title: 'soc-metrics-*', name: 'SOC - Últimas execuções sem corte temporal', timeless: true },
   { id: 'soc-elastic-alerts', title: '.alerts-security.alerts-soc', name: 'SOC - Alertas de detecção Elastic' },
 ];
 
 const dataViewObjects = DATA_VIEWS.map((d) => ({
   type: 'index-pattern',
   id: d.id,
-  attributes: { title: d.title, name: d.name, ...(!d.timeless ? { timeFieldName: '@timestamp' } : {}) },
+  attributes: { title: d.title, name: d.name, ...(!d.timeless ? { timeFieldName: '@timestamp' } : {}),
+    ...(['soc-events', 'soc-devices', 'soc-posture'].includes(d.id) ? { fieldFormatMap: JSON.stringify({
+      'host.id': { id: 'url', params: { type: 'link', labelTemplate: '{{value}}',
+        urlTemplate: `/s/soc/app/discover#/?_a=(index:'${d.id}',query:(language:kuery,query:'${d.id === 'soc-posture' ? 'soc.posture.active%20:%20true%20and%20' : ''}host.id%20:%20%22{{value}}%22'))`,
+        openLinkInCurrentTab: false } },
+    }) } : {}) },
   references: [],
   coreMigrationVersion: '8.8.0',
   typeMigrationVersion: '8.0.0',
@@ -40,7 +47,12 @@ const dataViewObjects = DATA_VIEWS.map((d) => ({
 // Lens conserva o tipo do campo em termos, inclusive boolean e ip (Kibana 9.5).
 const TERM_TYPES = {
   'soc.asset.expected': 'boolean', 'soc.asset.observed': 'boolean',
+  'soc.asset.internet_facing': 'boolean', 'soc.posture.active': 'boolean',
+  'soc.posture.is_applicable': 'boolean', 'soc.posture.is_compliant': 'boolean',
+  'soc.posture.exploit_available': 'boolean',
   'source.ip': 'ip', 'destination.ip': 'ip',
+  'soc.network.local_ip': 'ip', 'soc.network.remote_ip': 'ip',
+  'soc.network.local_port': 'number', 'soc.network.remote_port': 'number',
 };
 
 const col = {
@@ -56,9 +68,10 @@ const col = {
     label, customLabel: true, dataType: 'number', operationType: 'unique_count', sourceField: field,
     isBucketed: false, scale: 'ratio', params: { emptyAsNull: false },
   }),
-  last: (field, label) => ({
-    label, customLabel: true, dataType: 'number', operationType: 'last_value', sourceField: field,
-    isBucketed: false, scale: 'ratio', params: { sortField: '@timestamp', showArrayValues: false },
+  last: (field, label, dataType = 'number') => ({
+    label, customLabel: true, dataType, operationType: 'last_value', sourceField: field,
+    isBucketed: false, scale: dataType === 'number' ? 'ratio' : dataType === 'date' ? 'interval' : 'ordinal',
+    params: { sortField: '@timestamp', showArrayValues: false },
     filter: { query: `${field} : *`, language: 'kuery' },
   }),
   terms: (field, label, size, orderBy, missingBucket = false) => ({
@@ -193,8 +206,18 @@ const markdown = (text) => ({
 /**
  * panels: [[objeto Lens | markdown, x, y, w, h], ...] numa grade de 48 colunas.
  */
-function dashboard(id, title, description, panels, timeFrom = 'now-7d') {
+function dashboard(id, title, description, panels, timeFrom = 'now-7d', controls = []) {
   const references = [];
+  // Controles (listas de valores) no topo: [campo, título], sobre a data view soc-events.
+  const controlPanels = Object.fromEntries(controls.map(([field, label], order) => {
+    const cid = `ctl-${field.replace(/[^a-z0-9]+/gi, '-')}`;
+    references.push({ name: `controlGroup_${cid}:optionsListDataView`, type: 'index-pattern', id: 'soc-events' });
+    return [cid, {
+      order, width: 'medium', grow: true, type: 'optionsListControl',
+      explicitInput: { id: cid, dataViewId: 'soc-events', fieldName: field, title: label, searchTechnique: 'prefix',
+        selectedOptions: [], enhancements: {} },
+    }];
+  }));
   const panelsJSON = panels.map(([obj, x, y, w, h], i) => {
     const panelIndex = `p${i + 1}`;
     const gridData = { x, y, w, h, i: panelIndex };
@@ -223,6 +246,13 @@ function dashboard(id, title, description, panels, timeFrom = 'now-7d') {
       optionsJSON: JSON.stringify({ useMargins: true, syncColors: false, syncCursor: true, syncTooltips: false, hidePanelTitles: false }),
       panelsJSON: JSON.stringify(panelsJSON),
       kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ query: { query: '', language: 'kuery' }, filter: [] }) },
+      ...(controls.length ? {
+        controlGroupInput: {
+          controlStyle: 'oneLine', chainingSystem: 'HIERARCHICAL', showApplySelections: false,
+          panelsJSON: JSON.stringify(controlPanels),
+          ignoreParentSettingsJSON: JSON.stringify({ ignoreFilters: false, ignoreQuery: false, ignoreTimerange: false, ignoreValidations: false }),
+        },
+      } : {}),
     },
     references,
     coreMigrationVersion: '8.8.0',
@@ -241,6 +271,14 @@ const COLLECTOR = 'event.dataset : "soc.collector_status" and soc.metrics.source
 const DATABASE = 'event.dataset : "soc.database_capacity" and soc.metrics.source : "database.capacity"';
 const ELASTIC = 'event.dataset : "soc.elasticsearch_capacity" and soc.metrics.source : "elasticsearch.capacity"';
 const ASSET = SERVER;
+const PROCESS = `${SERVER} and event.dataset : "defender.deviceprocessevents"`;
+const NETWORK = `${SERVER} and event.dataset : "defender.devicenetworkevents"`;
+const POSTURE = `${SERVER} and soc.posture.active : true`;
+const VULNERABILITY = `${POSTURE} and soc.posture.kind : "vulnerability"`;
+const CONFIGURATION = `${POSTURE} and soc.posture.kind : "configuration"`;
+const TVM_SOURCES = 'soc.metrics.source : ("inventory.deviceinfo" or "snapshot.devicetvmsoftwarevulnerabilities" or "snapshot.devicetvmsecureconfigurationassessment")';
+const TELEMETRY_SOURCES = 'soc.metrics.source : ("hunting.deviceprocessevents" or "hunting.devicenetworkevents" or "reconcile.deviceprocessevents" or "reconcile.devicenetworkevents")';
+const PRIORITY_VULNERABILITY = `${VULNERABILITY} and vulnerability.severity : ("high" or "critical") and soc.posture.exploit_available : true`;
 
 function search(id, title, dataView, query, columns) {
   return {
@@ -257,6 +295,8 @@ const NAV_ITEMS = [
   ['soc-dashboard-overview', 'Visão operacional'], ['soc-dashboard-acessos', 'Identidades e acessos'],
   ['soc-dashboard-servidor', 'Investigar servidor'], ['soc-dashboard-asr', 'ASR'],
   ['soc-dashboard-cobertura', 'Cobertura e capacidade'],
+  ['soc-dashboard-processos-rede', 'Processos e conexões'], ['soc-dashboard-exposicao', 'Exposição e proteção'],
+  ['soc-dashboard-acessos-servidores', 'Acessos aos servidores'],
 ];
 const nav = () => markdown(NAV_ITEMS.map(([id, title]) => `[${title}](/s/soc/app/dashboards#/view/${id})`).join(' · ') +
   '\n\n**Escopo:** nome contém srv ou fisico, exclui note ou micro. Para correlacionar, filtre por **host.id** e **soc.identity.correlation_key**. ' +
@@ -377,6 +417,82 @@ const cap = {
     ['soc.metrics.elastic_fs_available_bytes', 'Disco disponível'],
   ]),
 };
+// Postura é estado atual, não uma série de snapshots somáveis. Cada documento
+// ativo representa a chave estável emitida pelo coletor, incluindo o software.
+function sourceFreshness(id, title, sources) {
+  const result = table(id, title, 'soc-metrics-current', `${COLLECTOR} and ${sources}`,
+    [['soc.metrics.source', 'Fonte', 20]], [
+      ['status', col.last('soc.metrics.status', 'Status da última execução', 'string')],
+      ['finished', col.last('soc.metrics.finished_at', 'Última conclusão (UTC)', 'date')],
+      ['fetched', col.last('soc.metrics.fetched', 'Linhas na última execução')],
+      ['lag', col.last('soc.metrics.lag_seconds', 'Atraso do checkpoint (s)')],
+    ]);
+  result.attributes.state.datasourceStates.formBased.layers[LAYER].columns.m.label = 'Amostras preservadas';
+  return result;
+}
+const pr = {
+  processes: metric('soc-pr-processes', 'Criações de processo observadas no período', 'soc-events', PROCESS),
+  connections: metric('soc-pr-connections', 'Eventos de rede observados no período', 'soc-events', NETWORK),
+  hosts: metric('soc-pr-hosts', 'Servidores com processo ou rede observado', 'soc-events',
+    `(${PROCESS}) or (${NETWORK})`, col.unique('host.id', 'Servidores distintos')),
+  processNames: ranking('soc-pr-process-names', 'Top 15 processos criados — documentos observados', 'soc-events', PROCESS,
+    'process.name', 'Processo criado', 15),
+  parents: table('soc-pr-parent-child', 'Top 30 relações pai → processo criado', 'soc-events', PROCESS, [
+    ['process.parent.name', 'Processo pai', 30], ['process.name', 'Processo criado', 10],
+    ['host.id', 'Servidor ID — abrir no Discover', 10],
+  ]),
+  remote: table('soc-pr-remote-endpoints', 'Top 30 extremos remotos registrados — sem inferir direção', 'soc-events', NETWORK, [
+    ['soc.network.remote_ip', 'IP remoto', 30], ['soc.network.remote_port', 'Porta remota', 10],
+    ['network.transport', 'Transporte', 3], ['process.name', 'Processo iniciador', 10],
+  ]),
+  activity: timeline('soc-pr-activity', 'Atividade observada por fonte no período', 'soc-events',
+    `(${PROCESS}) or (${NETWORK})`, 'event.dataset', 'Fonte', 2),
+  freshness: sourceFreshness('soc-pr-freshness', 'Última execução conhecida — processos, rede e reconciliação', TELEMETRY_SOURCES),
+};
+const posture = {
+  cves: metric('soc-posture-cves', 'CVEs distintos ativos — cardinalidade aproximada', 'soc-posture', VULNERABILITY,
+    col.unique('vulnerability.id', 'CVEs distintos ativos')),
+  instances: metric('soc-posture-instances', 'Instâncias ativas host/CVE/software/versão', 'soc-posture', VULNERABILITY),
+  hosts: metric('soc-posture-hosts', 'Servidores com vulnerabilidade reportada ativa', 'soc-posture', VULNERABILITY,
+    col.unique('host.id', 'Servidores distintos')),
+  priority: metric('soc-posture-priority', 'Instâncias high/critical com exploit disponível', 'soc-posture', PRIORITY_VULNERABILITY),
+  severity: donut('soc-posture-severity', 'Instâncias ativas por severidade reportada', 'soc-posture', VULNERABILITY,
+    'vulnerability.severity', 'Severidade', 5),
+  exploitUnknown: metric('soc-posture-exploit-unknown', 'Instâncias sem informação de exploit disponível', 'soc-posture',
+    `${VULNERABILITY} and not soc.posture.exploit_available : *`),
+  configFailures: metric('soc-posture-config-failures', 'Avaliações aplicáveis não conformes', 'soc-posture',
+    `${CONFIGURATION} and soc.posture.is_applicable : true and soc.posture.is_compliant : false`),
+  configUnknown: metric('soc-posture-config-unknown', 'Avaliações com aplicabilidade ou conformidade desconhecida', 'soc-posture',
+    `${CONFIGURATION} and (not soc.posture.is_applicable : * or (soc.posture.is_applicable : true and not soc.posture.is_compliant : *))`),
+  configNotApplicable: metric('soc-posture-config-not-applicable', 'Avaliações explicitamente não aplicáveis', 'soc-posture',
+    `${CONFIGURATION} and soc.posture.is_applicable : false`),
+  exposure: donut('soc-posture-exposure', 'Exposição reportada dos servidores observados', 'soc-devices',
+    `${ASSET} and soc.asset.observed : true and soc.asset.exposure_level : *`, 'soc.asset.exposure_level', 'Nível de exposição'),
+  internet: metric('soc-posture-internet-facing', 'Servidores observados reportados como internet-facing', 'soc-devices',
+    `${ASSET} and soc.asset.observed : true and soc.asset.internet_facing : true`),
+  internetUnknown: metric('soc-posture-internet-unknown', 'Servidores sem informação de exposição à Internet', 'soc-devices',
+    `${ASSET} and soc.asset.observed : true and not soc.asset.internet_facing : *`),
+  exposureUnknown: metric('soc-posture-exposure-unknown', 'Servidores sem nível de exposição informado', 'soc-devices',
+    `${ASSET} and soc.asset.observed : true and not soc.asset.exposure_level : *`),
+  staleSensor: metric('soc-posture-sensor-stale', 'Sensores observados sem contato há mais de 24 h', 'soc-devices',
+    `${ASSET} and soc.asset.observed : true and soc.asset.last_seen < now-24h`),
+  unknownSensor: metric('soc-posture-sensor-unknown', 'Servidores observados sem horário de último contato', 'soc-devices',
+    `${ASSET} and soc.asset.observed : true and not soc.asset.last_seen : *`),
+  staleRows: metric('soc-posture-stale-snapshot', 'Registros ativos com snapshot há mais de 36 h', 'soc-posture',
+    `${POSTURE} and soc.posture.snapshot_at < now-36h`),
+  priorityTable: table('soc-posture-priority-table', 'Priorizar investigação — top 50 CVEs high/critical com exploit disponível', 'soc-posture',
+    PRIORITY_VULNERABILITY, [['vulnerability.id', 'CVE', 50], ['vulnerability.severity', 'Severidade', 2]],
+    [['hosts', col.unique('host.id', 'Servidores distintos')]]),
+  configTable: table('soc-posture-config-table', 'Top 30 configurações aplicáveis não conformes — estado reportado', 'soc-posture',
+    `${CONFIGURATION} and soc.posture.is_applicable : true and soc.posture.is_compliant : false`, [
+      ['soc.posture.configuration_id', 'Configuração ID', 30], ['soc.posture.configuration_name', 'Nome', 1],
+      ['soc.posture.configuration_category', 'Categoria', 1],
+    ], [['hosts', col.unique('host.id', 'Servidores distintos')]]),
+  freshness: sourceFreshness('soc-posture-freshness', 'Última execução conhecida — inventário e snapshots TVM', TVM_SOURCES),
+};
+// A contagem de documentos destas tabelas é de instâncias/avaliações, nunca CVEs distintos.
+posture.priorityTable.attributes.state.datasourceStates.formBased.layers[LAYER].columns.m.label = 'Instâncias host/CVE/software/versão';
+posture.configTable.attributes.state.datasourceStates.formBased.layers[LAYER].columns.m.label = 'Avaliações host/configuração';
 const detailSearches = [
   search('soc-search-logons', 'Logons detalhados — abrir no Discover para investigar', 'soc-events', LOGON,
     ['@timestamp', 'host.name', 'host.id', 'soc.identity.display', 'soc.identity.correlation_key', 'soc.identity.key', 'user.id', 'soc.identity.type',
@@ -394,9 +510,176 @@ const detailSearches = [
     ['host.name', 'host.id', 'soc.asset.expected', 'soc.asset.observed', 'soc.asset.owner',
       'soc.asset.environment', 'soc.asset.criticality', 'soc.asset.onboarding_status', 'soc.asset.sensor_health',
       'soc.asset.device_type', 'soc.asset.machine_group', 'soc.asset.os_platform', 'soc.asset.last_seen', 'soc.asset.snapshot_at']),
+  search('soc-search-processes', 'Processos criados — comando, pai, usuário e IDs para correlação', 'soc-events', PROCESS,
+    ['@timestamp', 'host.name', 'host.id', 'user.name', 'user.domain', 'user.id', 'process.name', 'process.command_line',
+      'process.executable', 'process.entity_id', 'process.pid', 'process.parent.name', 'process.parent.command_line',
+      'process.parent.entity_id', 'process.parent.pid', 'process.hash.sha256']),
+  search('soc-search-network', 'Conexões registradas — processo iniciador e extremos local/remoto', 'soc-events', NETWORK,
+    ['@timestamp', 'host.name', 'host.id', 'event.action', 'process.name', 'process.command_line', 'process.entity_id',
+      'process.pid', 'user.name', 'user.domain', 'soc.network.local_ip', 'soc.network.local_port', 'soc.network.local_ip_type',
+      'soc.network.remote_ip', 'soc.network.remote_port', 'soc.network.remote_url', 'soc.network.remote_ip_type', 'network.transport']),
+  search('soc-search-vulnerabilities', 'Vulnerabilidades ativas — uma instância host/CVE/software/versão por documento', 'soc-posture', VULNERABILITY,
+    ['soc.posture.snapshot_at', 'host.name', 'host.id', 'vulnerability.id', 'vulnerability.severity', 'vulnerability.score.base',
+      'soc.posture.exploit_available', 'soc.posture.software_vendor', 'package.name', 'package.version', 'soc.posture.state']),
+  search('soc-search-configurations', 'Avaliações ativas — aplicabilidade, conformidade e contexto', 'soc-posture', CONFIGURATION,
+    ['soc.posture.snapshot_at', 'soc.posture.assessed_at', 'host.name', 'host.id', 'soc.posture.configuration_id', 'soc.posture.configuration_name',
+      'soc.posture.configuration_category', 'soc.posture.configuration_subcategory', 'soc.posture.is_applicable',
+      'soc.posture.is_compliant', 'soc.posture.context', 'soc.posture.state']),
+  search('soc-search-exposure-assets', 'Exposição, valor do ativo e último contato conhecido do sensor', 'soc-devices', `${ASSET} and soc.asset.observed : true`,
+    ['host.name', 'host.id', 'soc.asset.exposure_level', 'soc.asset.asset_value', 'soc.asset.internet_facing', 'soc.asset.sensor_health',
+      'soc.asset.last_seen', 'soc.asset.snapshot_at', 'soc.asset.expected', 'soc.asset.owner', 'soc.asset.criticality']),
 ];
 detailSearches[4].attributes.sort = [['soc.asset.last_seen', 'desc']];
-const lensObjects = [...Object.values(ov), ...Object.values(ac), ...Object.values(srv), ...Object.values(asr), ...Object.values(cap)];
+for (const id of ['soc-search-vulnerabilities', 'soc-search-configurations']) {
+  detailSearches.find((o) => o.id === id).attributes.sort = [['soc.posture.snapshot_at', 'desc']];
+}
+detailSearches.find((o) => o.id === 'soc-search-exposure-assets').attributes.sort = [['soc.asset.last_seen', 'desc']];
+// Acessos aos servidores (visão consolidada, inspirada no painel Grafana) --------------
+
+const GREEN = '#54B399';
+const RED = '#E7664C';
+const AMBER = '#D6BF57';
+const BLUE = '#6092C0';
+const OK = { query: 'event.outcome : "success"', language: 'kuery' };
+const FAIL = { query: 'event.outcome : "failure"', language: 'kuery' };
+const filtered = (c, query) => ({ ...c, filter: { query, language: 'kuery' } });
+// Horário mais recente do grupo (max de @timestamp).
+const lastSeen = () => ({
+  label: 'Último', customLabel: true, dataType: 'date', operationType: 'max', sourceField: '@timestamp',
+  isBucketed: false, scale: 'ratio', params: { emptyAsNull: true },
+});
+
+/** Cartão com valor principal, valor secundário opcional e cor fixa. */
+function card(id, title, query, primary, secondary, color) {
+  const columns = [['m', primary]];
+  if (secondary) columns.push(['s', secondary]);
+  return lens(id, title, 'soc-events', query, 'lnsMetric', columns, {
+    layerId: LAYER, layerType: 'data', metricAccessor: 'm',
+    ...(secondary ? { secondaryMetricAccessor: 's' } : {}), ...(color ? { color } : {}),
+  });
+}
+
+/** Barras horizontais com sucesso (verde) e falha (vermelho) empilhados. */
+function outcomeRanking(id, title, query, field, label, size = 10, { failuresOnly = false, missing = false } = {}) {
+  const order = failuresOnly ? 'fail' : 'ok';
+  const columns = [['y', col.terms(field, label, size, order, missing)]];
+  if (!failuresOnly) columns.push(['ok', { ...col.count('Concedidos'), filter: OK }]);
+  columns.push(['fail', { ...col.count('Negados'), filter: FAIL }]);
+  const accessors = columns.slice(1).map(([cid]) => cid);
+  return lens(id, title, 'soc-events', query, 'lnsXY', columns, xy('bar_horizontal_stacked', {
+    xAccessor: 'y', accessors,
+    yConfig: accessors.map((a) => ({ forAccessor: a, color: a === 'ok' ? GREEN : RED })),
+  }));
+}
+
+Object.assign(TERM_TYPES, { 'soc.identity.generic': 'boolean', 'soc.identity.privileged': 'boolean' });
+
+const asv = (() => {
+  const HUMAN_TYPES = 'winlog.logon.type : ("Interactive" or "RemoteInteractive" or "CachedInteractive" or "Unlock" or "NetworkCleartext")';
+  const CONSOLE_TYPES = 'winlog.logon.type : ("Interactive" or "RemoteInteractive" or "CachedInteractive" or "Unlock")';
+  const PRIVATE = 'source.ip : ("10.0.0.0/8" or "172.16.0.0/12" or "192.168.0.0/16" or "127.0.0.0/8" or "169.254.0.0/16" or "::1" or "fe80::/10" or "fc00::/7")';
+  const ident = (label = 'Identidades') => col.unique('soc.identity.correlation_key', label);
+  return {
+    // Cartões
+    granted: card('soc-asv-granted', 'Acessos concedidos', LOGON, filtered(col.count('Acessos concedidos'), OK.query),
+      filtered(col.count('Tentativas sem resultado'), 'event.action : "LogonAttempted"'), GREEN),
+    denied: card('soc-asv-denied', 'Acessos negados', LOGON, filtered(col.count('Acessos negados'), FAIL.query),
+      filtered(ident('Identidades com falha'), FAIL.query), RED),
+    accounts: card('soc-asv-accounts', 'Contas distintas', ACCOUNT, ident('Contas distintas (exceto máquina e sistema)')),
+    servers: card('soc-asv-servers', 'Servidores acessados', IDENTITY, col.unique('host.id', 'Servidores acessados')),
+    rdp: card('soc-asv-rdp', 'Acessos RDP', `${LOGON} and winlog.logon.type : "RemoteInteractive"`,
+      filtered(col.count('Acessos RDP concedidos'), OK.query), filtered(ident('Contas'), OK.query), BLUE),
+    admin: card('soc-asv-admin', 'Com privilégio de admin', `${IDENTITY} and soc.identity.is_local_admin : true`,
+      filtered(col.count('Com privilégio de admin local'), OK.query), filtered(ident('Contas'), OK.query), AMBER),
+    cleartext: card('soc-asv-cleartext', 'Senha em texto claro', `${LOGON} and winlog.logon.type : "NetworkCleartext"`,
+      col.count('Senha em texto claro (NetworkCleartext)'), ident('Contas'), AMBER),
+    ntlm: card('soc-asv-ntlm', 'Autenticações NTLM', `${LOGON} and soc.logon.protocol : ("NTLM" or "ntlm")`,
+      col.count('Autenticações NTLM'), ident('Contas'), AMBER),
+    locked: card('soc-asv-locked', 'Contas bloqueadas', `${IDENTITY} and event.reason : "AccountLocked"`,
+      ident('Contas bloqueadas (AccountLocked)'), col.count('Eventos'), RED),
+
+    // Tempo e mapa de calor
+    timeline: lens('soc-asv-timeline', 'Acessos ao longo do tempo — concedidos e negados', 'soc-events', LOGON, 'lnsXY',
+      [['x', col.date()], ['ok', { ...col.count('Concedidos'), filter: OK }], ['fail', { ...col.count('Negados'), filter: FAIL }]],
+      xy('bar_stacked', { xAccessor: 'x', accessors: ['ok', 'fail'],
+        yConfig: [{ forAccessor: 'ok', color: GREEN }, { forAccessor: 'fail', color: RED }] })),
+    heatmap: lens('soc-asv-heatmap', 'Mapa de calor — servidor × hora (top 25 servidores)', 'soc-events', IDENTITY, 'lnsHeatmap',
+      [['y', col.terms('host.name', 'Servidor', 25, 'v')],
+        ['x', { ...col.date('Hora'), params: { interval: '1h', includeEmptyRows: true, dropPartials: false } }],
+        ['v', col.count('Acessos')]],
+      {
+        layerId: LAYER, layerType: 'data', shape: 'heatmap', xAccessor: 'x', yAccessor: 'y', valueAccessor: 'v',
+        legend: { isVisible: true, position: 'right', type: 'heatmap_legend' },
+        gridConfig: { type: 'heatmap_grid', isCellLabelVisible: false, isYAxisLabelVisible: true, isXAxisLabelVisible: true,
+          isYAxisTitleVisible: false, isXAxisTitleVisible: false },
+      }),
+
+    // Rankings
+    topServers: outcomeRanking('soc-asv-top-servers', 'Servidores mais acessados', IDENTITY, 'host.name', 'Servidor'),
+    topAccounts: outcomeRanking('soc-asv-top-accounts', 'Contas com mais acessos (exceto máquina e sistema)', ACCOUNT,
+      'soc.identity.display', 'Conta'),
+    types: outcomeRanking('soc-asv-types', 'Tipos de acesso', LOGON, 'winlog.logon.type', 'Tipo'),
+    topFailures: outcomeRanking('soc-asv-top-failures', 'Contas com mais falhas', ACCOUNT, 'soc.identity.display', 'Conta', 10,
+      { failuresOnly: true }),
+    failureOrigins: outcomeRanking('soc-asv-failure-origins', 'Origens das falhas (IP; vazio = não informada)', LOGON,
+      'source.ip', 'Origem', 10, { failuresOnly: true, missing: true }),
+
+    // Pontos de atenção — ordem e severidade revisadas pelo papel cyber
+    publicSource: table('soc-asv-pa-public', '🔴 Acesso de IP público (rede, RDP ou texto claro)', 'soc-events',
+      `${IDENTITY} and source.ip : * and not ${PRIVATE} and winlog.logon.type : ("Network" or "RemoteInteractive" or "NetworkCleartext")`,
+      [['source.ip', 'Origem', 20], ['host.name', 'Servidor', 5], ['soc.identity.display', 'Conta', 5], ['event.outcome', 'Resultado', 2]],
+      [['t', lastSeen()]]),
+    spraying: table('soc-asv-pa-spraying', '🔴 Possível password spraying — origens com falha em várias contas', 'soc-events',
+      `${ACCOUNT} and event.outcome : "failure" and not winlog.logon.type : ("Service" or "Batch")`,
+      // Só a origem: agrupar também pelo nome do dispositivo dividiria a contagem de contas.
+      [['source.ip', 'Origem (vazio = não informada)', 15]],
+      [['u', ident('Contas distintas com falha')], ['t', lastSeen()]], 'u'),
+    cleartextTable: table('soc-asv-pa-cleartext', '🟠 Senha em texto claro (NetworkCleartext) — crítico quando houver sucesso', 'soc-events',
+      `${IDENTITY} and winlog.logon.type : "NetworkCleartext"`,
+      [['soc.identity.display', 'Conta', 15], ['host.name', 'Servidor', 5], ['source.ip', 'Origem', 3], ['event.outcome', 'Resultado', 2]],
+      [['t', lastSeen()]]),
+    lockedTable: table('soc-asv-pa-locked', '🟠 Contas bloqueadas (AccountLocked)', 'soc-events',
+      `${ACCOUNT} and event.reason : "AccountLocked"`,
+      [['soc.identity.display', 'Conta', 20]],
+      [['h', col.unique('host.id', 'Servidores')], ['t', lastSeen()]]),
+    generic: table('soc-asv-pa-generic', '🟠 Contas genéricas em RDP/console', 'soc-events',
+      `${IDENTITY} and soc.identity.generic : true and ${CONSOLE_TYPES}`,
+      [['soc.identity.display', 'Conta', 15], ['host.name', 'Servidor', 10], ['event.outcome', 'Resultado', 2], ['source.ip', 'Origem', 3]],
+      [['t', lastSeen()]]),
+    offHours: table('soc-asv-pa-offhours', '🟠 Acessos humanos fora do horário (22h–6h ou fim de semana, Brasília)', 'soc-events',
+      `${ACCOUNT} and soc.time.off_hours : true and event.outcome : "success" and ${HUMAN_TYPES}`,
+      [['soc.identity.display', 'Conta', 20], ['host.name', 'Servidor', 5], ['winlog.logon.type', 'Tipo', 3]],
+      [['t', lastSeen()]]),
+    bursts: table('soc-asv-pa-bursts', '🟠 Rajadas de falha — conta, servidor e motivo (top 20)', 'soc-events',
+      `${ACCOUNT} and event.outcome : "failure"`,
+      [['soc.identity.display', 'Conta', 20], ['host.name', 'Servidor', 3], ['event.reason', 'Motivo', 3]],
+      [['t', lastSeen()]]),
+    sweep: table('soc-asv-pa-sweep', '🔵 Contas em muitos servidores (rede e RDP)', 'soc-events',
+      `${ACCOUNT} and event.outcome : "success" and winlog.logon.type : ("Network" or "RemoteInteractive")`,
+      [['soc.identity.display', 'Conta', 20]],
+      [['u', col.unique('host.id', 'Servidores (rede ou RDP)')],
+        ['r', filtered(col.unique('host.id', 'Servidores via RDP'), 'winlog.logon.type : "RemoteInteractive"')], ['t', lastSeen()]], 'u'),
+    runas: table('soc-asv-pa-runas', '🔵 NewCredentials (runas /netonly) — conta e servidor', 'soc-events',
+      `${IDENTITY} and winlog.logon.type : "NewCredentials"`,
+      [['soc.identity.display', 'Conta', 15], ['host.name', 'Servidor', 5]], [['t', lastSeen()]]),
+    localNetwork: table('soc-asv-pa-local', '🔵 Contas locais via rede ou RDP', 'soc-events',
+      `${ACCOUNT} and soc.identity.scope : "local" and event.outcome : "success" and winlog.logon.type : ("Network" or "RemoteInteractive")`,
+      [['soc.identity.display', 'Conta local', 15], ['host.name', 'Servidor', 3], ['source.ip', 'Origem', 3]], [['t', lastSeen()]]),
+
+    // Detalhamento
+    deniedTable: table('soc-asv-denied-table', 'Acessos negados agrupados — servidor, conta, motivo, tipo, protocolo e origem', 'soc-events',
+      `${IDENTITY} and event.outcome : "failure"`,
+      [['host.name', 'Servidor', 20], ['soc.identity.display', 'Conta', 5], ['event.reason', 'Motivo', 3],
+        ['winlog.logon.type', 'Tipo', 2], ['soc.logon.protocol', 'Protocolo', 2], ['source.ip', 'Origem', 2]],
+      [['t', lastSeen()]]),
+    adminConsole: table('soc-asv-admin-console', 'Acessos RDP/console com privilégio de administrador', 'soc-events',
+      `${IDENTITY} and soc.identity.is_local_admin : true and event.outcome : "success" and ${CONSOLE_TYPES}`,
+      [['soc.identity.display', 'Conta', 20], ['host.name', 'Servidor', 10], ['soc.identity.generic', 'Conta genérica', 2]],
+      [['t', lastSeen()]]),
+  };
+})();
+const lensObjects = [...Object.values(ov), ...Object.values(ac), ...Object.values(srv), ...Object.values(asr), ...Object.values(cap),
+  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv)];
 const dashboards = [
   dashboard('soc-dashboard-overview', 'SOC - Visão operacional', known, [
     [nav(), 0, 0, 48, 5], [markdown(`**${known}** Os incidentes/alertas Defender abrangem o tenant; o escopo de servidores é aplicado aos eventos e ao inventário. Alertas Elastic são detecções executadas neste espaço SOC e obedecem ao período selecionado.`), 0, 5, 48, 5],
@@ -439,7 +722,60 @@ const dashboards = [
     [cap.dbTrend, 0, 83, 48, 15], [cap.esTrend, 0, 98, 48, 15],
     [detailSearches[3], 0, 113, 48, 20], [detailSearches[4], 0, 133, 48, 20],
   ], 'now-24h'),
+  dashboard('soc-dashboard-processos-rede', 'SOC - Processos e conexões', 'Investigar processos criados e conexões registradas com correlação por servidor e identificador de processo.', [
+    [nav(), 0, 0, 48, 5],
+    [markdown('**Investigue por host.id:** clique no ID para abrir o Discover com esse servidor, ou aplique o filtro no painel. Correlacione **host.id + process.entity_id** quando o identificador estiver presente. PID pode ser reutilizado; sua igualdade não comprova que se trata do mesmo processo. Nos eventos de criação, process.* é o processo criado e process.parent.* é o iniciador; nos eventos de rede, process.* é o iniciador da conexão. Usuário pode estar ausente.\n\n**Rede:** local e remoto seguem os campos do Defender; não representam uma direção inferida. Não há bytes, volume transferido ou conclusão de sucesso nesta fonte normalizada. Contagens são documentos observados, não inventário completo de processos ou conexões. Antes de interpretar ausência de eventos, confira a última execução das fontes no final do painel.'), 0, 5, 48, 9],
+    [pr.processes, 0, 14, 16, 8], [pr.connections, 16, 14, 16, 8], [pr.hosts, 32, 14, 16, 8],
+    [pr.activity, 0, 22, 48, 14], [pr.processNames, 0, 36, 48, 15],
+    [pr.parents, 0, 51, 48, 17], [pr.remote, 0, 68, 48, 18],
+    [detailSearches.find((o) => o.id === 'soc-search-processes'), 0, 86, 48, 22],
+    [detailSearches.find((o) => o.id === 'soc-search-network'), 0, 108, 48, 22],
+    [pr.freshness, 0, 130, 48, 18],
+    [markdown('**Disponibilidade da telemetria:** esta tabela ignora o seletor de tempo e mostra a última execução conhecida por fonte. Fonte ausente = sem métrica conhecida; não significa coleta saudável. Status diferente de success ou conclusão antiga exige verificar erro, permissão, licença, limite da consulta e atraso. A conclusão da consulta não comprova contato recente do sensor; confira DeviceInfo em Exposição e proteção.'), 0, 148, 48, 6],
+  ]),
+  dashboard('soc-dashboard-exposicao', 'SOC - Exposição e proteção', 'Estado atual reportado: exposição dos ativos, vulnerabilidades TVM e avaliações de configuração. Sem corte temporal global.', [
+    [nav(), 0, 0, 48, 5],
+    [markdown('**Estado atual reportado, sem corte pelo seletor de tempo:** somente registros TVM com **soc.posture.active:true**. Um documento de vulnerabilidade representa a combinação **host/CVE/software/versão**; o mesmo CVE em vários servidores ou softwares aumenta instâncias, não CVEs distintos. A cardinalidade de CVEs/hosts é aproximada. Snapshots completos atualizam o estado; uma falha preserva a informação anterior, que pode estar antiga.\n\n**Prioridade para investigar:** high/critical com exploit disponível exige atenção, mas **exploit disponível não significa exploração observada**. CVSS é exibido quando informado, sem presumir score ausente. Registros que deixam de ser observados em um snapshot completo saem da lista ativa; isso **não comprova correção**. Servidor offline, mudança de escopo e perda de cobertura também precisam ser considerados.'), 0, 5, 48, 10],
+    [posture.cves, 0, 15, 12, 9], [posture.instances, 12, 15, 12, 9], [posture.hosts, 24, 15, 12, 9], [posture.priority, 36, 15, 12, 9],
+    [posture.severity, 0, 24, 24, 15], [posture.exposure, 24, 24, 24, 15],
+    [posture.internet, 0, 39, 16, 9], [posture.internetUnknown, 16, 39, 16, 9], [posture.exposureUnknown, 32, 39, 16, 9],
+    [posture.configFailures, 0, 48, 16, 9], [posture.configUnknown, 16, 48, 16, 9], [posture.configNotApplicable, 32, 48, 16, 9],
+    [posture.priorityTable, 0, 57, 48, 18], [posture.configTable, 0, 75, 48, 18],
+    [detailSearches.find((o) => o.id === 'soc-search-vulnerabilities'), 0, 93, 48, 23],
+    [detailSearches.find((o) => o.id === 'soc-search-configurations'), 0, 116, 48, 23],
+    [markdown('**Exposição e proteção:** IsInternetFacing ausente é **desconhecido**, nunca false. ExposureLevel e AssetValue são valores reportados pelo Defender, não criticidade local validada. Uma avaliação não aplicável não é falha; campo ausente não é conformidade. O dado de configuração não comprova sozinho que todas as políticas de proteção estejam ativas. Clique em host.id para detalhar o estado do mesmo servidor no Discover.\n\n**Atualização:** último contato do sensor, avaliação (`soc.posture.assessed_at`), snapshot e conclusão da consulta são relógios diferentes. Uma consulta recente pode retornar avaliação antiga; horário ausente é desconhecido. Os limites de 24 h para contato e 36 h para snapshot são sinais operacionais para revisão, não confirmação de comprometimento.'), 0, 139, 48, 9],
+    [posture.staleSensor, 0, 148, 16, 9], [posture.unknownSensor, 16, 148, 16, 9], [posture.staleRows, 32, 148, 16, 9],
+    [posture.exploitUnknown, 0, 157, 48, 8],
+    [detailSearches.find((o) => o.id === 'soc-search-exposure-assets'), 0, 165, 48, 22],
+    [posture.freshness, 0, 187, 48, 18],
+    [markdown('**Vazio não é saudável:** verifique cada fonte na tabela de execuções, o horário de conclusão e os sensores. Fonte ausente, falha ou última conclusão antiga deixa a cobertura indeterminada. Snapshot TVM completo com zero linhas pode ser um resultado válido, mas uma tabela indisponível, licença ausente ou consulta truncada é falha de coleta. Não substitua essa validação por zero no cartão. A tabela ignora o seletor de tempo e mostra a última execução preservada nas métricas (retenção de 60 dias). “Amostras preservadas” são cópias periódicas do estado do coletor, não quantidade de execuções.'), 0, 205, 48, 7],
+  ], 'now-24h'),
 ];
+
+dashboards.push(dashboard('soc-dashboard-acessos-servidores', 'SOC - Acessos aos servidores',
+  'Visão consolidada de autenticações nos servidores: indicadores, pontos de atenção, distribuição no tempo, mapa de calor e detalhamento.', [
+    [nav(), 0, 0, 48, 5],
+    [asv.granted, 0, 5, 5, 7], [asv.denied, 5, 5, 5, 7], [asv.accounts, 10, 5, 6, 7], [asv.servers, 16, 5, 5, 7],
+    [asv.rdp, 21, 5, 5, 7], [asv.admin, 26, 5, 6, 7], [asv.cleartext, 32, 5, 5, 7], [asv.ntlm, 37, 5, 6, 7], [asv.locked, 43, 5, 5, 7],
+    [markdown('### Pontos de atenção\n🔴 crítico · 🟠 atenção · 🔵 informativo. Cada tabela é um ranking limitado (top N): ordene pelas colunas e **clique em um valor para filtrar o painel inteiro**. ' +
+      'Use os controles acima (servidor, conta, tipo, resultado, origem) para recortar; o botão de cada tabela abre os eventos no Discover. ' +
+      'Fora do horário = 22h–6h ou fim de semana (Brasília); revise com a operação se turnos ou safra tornam isso normal.'), 0, 12, 48, 5],
+    [asv.publicSource, 0, 17, 24, 12], [asv.spraying, 24, 17, 24, 12],
+    [asv.cleartextTable, 0, 29, 24, 12], [asv.lockedTable, 24, 29, 24, 12],
+    [asv.generic, 0, 41, 24, 12], [asv.offHours, 24, 41, 24, 12],
+    [asv.bursts, 0, 53, 24, 12], [asv.sweep, 24, 53, 24, 12],
+    [asv.runas, 0, 65, 24, 10], [asv.localNetwork, 24, 65, 24, 10],
+    [asv.timeline, 0, 75, 48, 12],
+    [asv.heatmap, 0, 87, 48, 20],
+    [asv.topServers, 0, 107, 16, 15], [asv.topAccounts, 16, 107, 16, 15], [asv.types, 32, 107, 16, 15],
+    [asv.topFailures, 0, 122, 24, 15], [asv.failureOrigins, 24, 122, 24, 15],
+    [asv.deniedTable, 0, 137, 48, 18],
+    [asv.adminConsole, 0, 155, 48, 16],
+    [detailSearches[0], 0, 171, 48, 20],
+  ], 'now-24h', [
+    ['host.name', 'Servidor'], ['soc.identity.display', 'Conta'], ['winlog.logon.type', 'Tipo de acesso'],
+    ['event.outcome', 'Resultado'], ['source.ip', 'Origem'],
+  ]));
 
 // Regras de detecção ---------------------------------------------------------------------
 

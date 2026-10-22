@@ -1,5 +1,5 @@
 {
-  "description": "Observador SOC: dashboards somente leitura; equivalente funcional a soc_reader.",
+  "description": "Observador SOC: sete dashboards somente leitura, incluindo soc-posture por soc-*. Equivalente funcional a soc_reader.",
   "elasticsearch": {
     "cluster": [],
     "indices": [

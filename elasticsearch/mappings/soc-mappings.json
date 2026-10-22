@@ -111,6 +111,12 @@
           "properties": {
             "name": {
               "type": "keyword"
+            },
+            "domain": {
+              "type": "keyword"
+            },
+            "id": {
+              "type": "keyword"
             }
           }
         },
@@ -118,8 +124,68 @@
           "properties": {
             "name": {
               "type": "keyword"
+            },
+            "entity_id": {
+              "type": "keyword"
+            },
+            "hash": {
+              "properties": {
+                "sha1": {
+                  "type": "keyword"
+                },
+                "sha256": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "user": {
+              "properties": {
+                "name": {
+                  "type": "keyword"
+                },
+                "domain": {
+                  "type": "keyword"
+                },
+                "id": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "pid": {
+              "type": "long",
+              "ignore_malformed": true
+            },
+            "command_line": {
+              "type": "wildcard"
+            },
+            "executable": {
+              "type": "keyword",
+              "ignore_above": 4096
+            },
+            "start": {
+              "type": "date"
             }
           }
+        },
+        "entity_id": {
+          "type": "keyword"
+        },
+        "hash": {
+          "properties": {
+            "sha1": {
+              "type": "keyword"
+            },
+            "sha256": {
+              "type": "keyword"
+            }
+          }
+        },
+        "executable": {
+          "type": "keyword",
+          "ignore_above": 4096
+        },
+        "start": {
+          "type": "date"
         }
       }
     },
@@ -271,6 +337,9 @@
             },
             "owner": {
               "type": "keyword"
+            },
+            "generic": {
+              "type": "boolean"
             }
           }
         },
@@ -311,6 +380,15 @@
             },
             "snapshot_at": {
               "type": "date"
+            },
+            "exposure_level": {
+              "type": "keyword"
+            },
+            "asset_value": {
+              "type": "keyword"
+            },
+            "internet_facing": {
+              "type": "boolean"
             }
           }
         },
@@ -389,6 +467,100 @@
               "type": "long"
             }
           }
+        },
+        "network": {
+          "properties": {
+            "local_ip": {
+              "type": "ip",
+              "ignore_malformed": true
+            },
+            "remote_ip": {
+              "type": "ip",
+              "ignore_malformed": true
+            },
+            "local_port": {
+              "type": "long",
+              "ignore_malformed": true
+            },
+            "remote_port": {
+              "type": "long",
+              "ignore_malformed": true
+            },
+            "local_ip_type": {
+              "type": "keyword"
+            },
+            "remote_ip_type": {
+              "type": "keyword"
+            },
+            "remote_url": {
+              "type": "keyword",
+              "ignore_above": 4096
+            }
+          }
+        },
+        "posture": {
+          "properties": {
+            "state": {
+              "type": "keyword"
+            },
+            "kind": {
+              "type": "keyword"
+            },
+            "configuration_id": {
+              "type": "keyword"
+            },
+            "configuration_name": {
+              "type": "keyword"
+            },
+            "configuration_category": {
+              "type": "keyword"
+            },
+            "configuration_subcategory": {
+              "type": "keyword"
+            },
+            "software_vendor": {
+              "type": "keyword"
+            },
+            "active": {
+              "type": "boolean"
+            },
+            "is_applicable": {
+              "type": "boolean"
+            },
+            "is_compliant": {
+              "type": "boolean"
+            },
+            "exploit_available": {
+              "type": "boolean"
+            },
+            "snapshot_at": {
+              "type": "date"
+            },
+            "context": {
+              "type": "flattened",
+              "depth_limit": 20,
+              "ignore_above": 4096
+            },
+            "assessed_at": {
+              "type": "date"
+            }
+          }
+        },
+        "time": {
+          "properties": {
+            "local_hour": {
+              "type": "byte"
+            },
+            "local_weekday": {
+              "type": "byte"
+            },
+            "weekend": {
+              "type": "boolean"
+            },
+            "off_hours": {
+              "type": "boolean"
+            }
+          }
         }
       }
     },
@@ -399,6 +571,41 @@
     },
     "ecs": {
       "properties": {
+        "version": {
+          "type": "keyword"
+        }
+      }
+    },
+    "network": {
+      "properties": {
+        "transport": {
+          "type": "keyword"
+        }
+      }
+    },
+    "vulnerability": {
+      "properties": {
+        "id": {
+          "type": "keyword"
+        },
+        "severity": {
+          "type": "keyword"
+        },
+        "score": {
+          "properties": {
+            "base": {
+              "type": "double",
+              "ignore_malformed": true
+            }
+          }
+        }
+      }
+    },
+    "package": {
+      "properties": {
+        "name": {
+          "type": "keyword"
+        },
         "version": {
           "type": "keyword"
         }

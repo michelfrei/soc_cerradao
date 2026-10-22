@@ -44,6 +44,37 @@ def boolean(value)
   nil
 end
 
+def copy_fields(event, data, fields)
+  fields.each { |src, dst| event.set(dst, data[src]) unless data[src].nil? || data[src] == '' }
+end
+
+def executable_path(folder, name)
+  folder = present(folder)
+  name = present(name)
+  return nil unless folder
+  return folder unless name
+  return folder if folder.split(/[\\\/]/).last.to_s.downcase == name.downcase
+  folder.sub(/[\\\/]\z/, '') + (folder.include?('\\') ? '\\' : '/') + name
+end
+
+# UniqueId é da instância do processo. PID sozinho não é chave de correlação.
+def process_fields(event, data, prefix = '', target = '[process]')
+  map = prefix.empty? ? {
+    'FileName' => 'name', 'ProcessCommandLine' => 'command_line', 'ProcessId' => 'pid',
+    'ProcessCreationTime' => 'start', 'ProcessUniqueId' => 'entity_id',
+    'SHA1' => 'hash][sha1', 'SHA256' => 'hash][sha256'
+  } : {
+    "#{prefix}FileName" => 'name', "#{prefix}CommandLine" => 'command_line', "#{prefix}Id" => 'pid',
+    "#{prefix}CreationTime" => 'start', "#{prefix}UniqueId" => 'entity_id',
+    "#{prefix}SHA1" => 'hash][sha1', "#{prefix}SHA256" => 'hash][sha256',
+    "#{prefix}AccountName" => 'user][name', "#{prefix}AccountDomain" => 'user][domain',
+    "#{prefix}AccountSid" => 'user][id'
+  }
+  copy_fields(event, data, map.transform_values { |dst| "#{target}[#{dst}]" })
+  executable = executable_path(data["#{prefix}FolderPath"], data["#{prefix}FileName"])
+  event.set("#{target}[executable]", executable) if executable
+end
+
 def identity(event, data)
   name = normalized(data['AccountName'])
   domain = normalized(data['AccountDomain'])
@@ -121,10 +152,26 @@ def identity(event, data)
   event.set('[soc][identity][classification_source]', account ? 'catalog' : type == 'unknown' ? 'unknown' : 'well_known')
   admin = boolean(data['IsLocalAdmin'])
   event.set('[soc][identity][is_local_admin]', admin) unless admin.nil?
+  # Nomes genéricos (sem dono identificável) — revisão do papel cyber; comparação sem domínio.
+  event.set('[soc][identity][generic]', name ? GENERIC_ACCOUNT.match?(name) : false)
   if account
     event.set('[soc][identity][privileged]', account['privileged']) unless account['privileged'].nil?
     event.set('[soc][identity][owner]', account['owner']) if present(account['owner'])
   end
+end
+
+GENERIC_ACCOUNT = /\A(administrator|administrador|admin|adm|root|guest|convidado|user|usuario|usuário|test|teste|temp|tmp|suporte|support|operador|scanner|backup|sa|sql|ti|infra|helpdesk)\d*\z/i
+
+# Brasília (UTC-3, sem horário de verão desde 2019). Fora do horário: 22h–6h ou fim de semana.
+LOCAL_OFFSET = -3 * 3600
+def local_time(event)
+  local = event.get('@timestamp').time.utc + LOCAL_OFFSET
+  hour = local.hour
+  weekend = local.saturday? || local.sunday?
+  event.set('[soc][time][local_hour]', hour)
+  event.set('[soc][time][local_weekday]', local.wday)
+  event.set('[soc][time][weekend]', weekend)
+  event.set('[soc][time][off_hours]', weekend || hour >= 22 || hour < 6)
 end
 
 def elastic_metrics(event)
@@ -181,7 +228,7 @@ def filter(event)
     return [event]
   end
 
-  if entity == 'device' || entity == 'event'
+  if %w[device event posture].include?(entity)
     return [] unless in_scope(data['DeviceName'])
     event.set('[host][name]', normalized(data['DeviceName']))
     event.set('[host][id]', normalized(data['DeviceId'])) if present(data['DeviceId'])
@@ -202,6 +249,12 @@ def filter(event)
       'Timestamp' => 'last_seen', 'SOCSnapshotAt' => 'snapshot_at'
     }
     map.each { |src, dst| event.set("[soc][asset][#{dst}]", data[src]) unless data[src].nil? || data[src] == '' }
+    internet_facing = boolean(data['IsInternetFacing'])
+    event.set('[soc][asset][internet_facing]', internet_facing) unless internet_facing.nil?
+    { 'ExposureLevel' => 'exposure_level', 'AssetValue' => 'asset_value' }.each do |src, dst|
+      value = normalized(data[src])
+      event.set("[soc][asset][#{dst}]", value) if value
+    end
     event.set('[@metadata][index]', 'soc-devices')
     if present(data['SOCSnapshotAt'])
       event.set('[@metadata][version]', (Time.parse(data['SOCSnapshotAt']).to_r * 1000).to_i.to_s)
@@ -209,7 +262,70 @@ def filter(event)
     return [event]
   end
 
+  if entity == 'posture'
+    # O coletor publica somente snapshots completos com IDs estáveis. Não deixar
+    # snapshot malformado escrever sem versão e sobrescrever estado mais recente.
+    return [] unless %w[devicetvmsoftwarevulnerabilities devicetvmsecureconfigurationassessment].include?(dataset)
+    snapshot = present(data['SOCSnapshotAt'])
+    active = boolean(data['SOCActive'])
+    return [] unless snapshot && !active.nil? && present(data['DeviceId'])
+    snapshot_time = Time.iso8601(snapshot)
+    kind = dataset == 'devicetvmsoftwarevulnerabilities' ? 'vulnerability' : 'configuration'
+    event.set('[event][kind]', 'state')
+    event.set('[event][category]', [kind == 'vulnerability' ? 'vulnerability' : 'configuration'])
+    event.set('[event][type]', ['info'])
+    event.set('[event][module]', 'defender')
+    event.set('[event][dataset]', "defender.#{dataset}")
+    event.set('[soc][posture][active]', active)
+    event.set('[soc][posture][state]', data['SOCState']) if present(data['SOCState'])
+    event.set('[soc][posture][kind]', kind)
+    event.set('[soc][posture][snapshot_at]', snapshot)
+    if kind == 'vulnerability'
+      copy_fields(event, data, {
+        'CveId' => '[vulnerability][id]',
+        'SoftwareName' => '[package][name]', 'SoftwareVersion' => '[package][version]',
+        'SoftwareVendor' => '[soc][posture][software_vendor]'
+      })
+      begin
+        score = Float(data['CvssScore'])
+        event.set('[vulnerability][score][base]', score) if score.finite? && score.between?(0, 10)
+      rescue ArgumentError, TypeError
+        # Pontuação ausente/inválida fica somente no payload bruto; não é zero.
+      end
+      severity = normalized(data['VulnerabilitySeverityLevel'])
+      event.set('[vulnerability][severity]', severity) if severity
+      exploit = boolean(data['IsExploitAvailable'])
+      event.set('[soc][posture][exploit_available]', exploit) unless exploit.nil?
+    else
+      copy_fields(event, data, {
+        'ConfigurationId' => '[soc][posture][configuration_id]',
+        'ConfigurationName' => '[soc][posture][configuration_name]',
+        'ConfigurationCategory' => '[soc][posture][configuration_category]',
+        'ConfigurationSubcategory' => '[soc][posture][configuration_subcategory]',
+        'Timestamp' => '[soc][posture][assessed_at]'
+      })
+      { 'IsApplicable' => 'is_applicable', 'IsCompliant' => 'is_compliant' }.each do |src, dst|
+        value = boolean(data[src])
+        event.set("[soc][posture][#{dst}]", value) unless value.nil?
+      end
+      context = data['Context']
+      if context.is_a?(String)
+        begin
+          context = JSON.parse(context)
+        rescue JSON::ParserError
+          context = { 'value' => context }
+        end
+      end
+      context = { 'items' => context } unless context.nil? || context.is_a?(Hash)
+      event.set('[soc][posture][context]', context) unless context.nil?
+    end
+    event.set('[@metadata][index]', 'soc-posture')
+    event.set('[@metadata][version]', (snapshot_time.to_r * 1000).to_i.to_s)
+    return [event]
+  end
+
   if entity == 'event'
+    local_time(event)
     map = {
       'ActionType' => '[event][action]', 'LogonType' => '[winlog][logon][type]',
       'LogonId' => '[winlog][logon][id]', 'Protocol' => '[soc][logon][protocol]',
@@ -219,20 +335,56 @@ def filter(event)
       'InitiatingProcessId' => '[process][pid]', 'InitiatingProcessAccountName' => '[process][user][name]',
       'InitiatingProcessParentFileName' => '[process][parent][name]'
     }
-    prefix = dataset == 'devicelogonevents' ? '[source]' : '[destination]'
-    map['RemoteIP'] = "#{prefix}[ip]"
-    map['RemotePort'] = "#{prefix}[port]"
-    map['RemoteDeviceName'] = "#{prefix}[domain]"
+    if dataset == 'devicelogonevents'
+      map['RemoteIP'] = '[source][ip]'
+      map['RemotePort'] = '[source][port]'
+      map['RemoteDeviceName'] = '[source][domain]'
+    end
     map.each { |src, dst| event.set(dst, data[src]) unless data[src].nil? || data[src] == '' }
-    identity(event, data)
+    if dataset == 'deviceprocessevents'
+      # O processo recém-criado não é o iniciador. Mantém ambos separadamente.
+      event.remove('process')
+      process_fields(event, data)
+      process_fields(event, data, 'InitiatingProcess', '[process][parent]')
+      copy_fields(event, data, { 'AccountName' => '[process][user][name]',
+        'AccountDomain' => '[process][user][domain]', 'AccountSid' => '[process][user][id]' })
+      identity(event, data)
+    elsif dataset == 'devicenetworkevents'
+      event.remove('process')
+      process_fields(event, data, 'InitiatingProcess')
+      account_data = data.merge('AccountName' => data['InitiatingProcessAccountName'],
+        'AccountDomain' => data['InitiatingProcessAccountDomain'], 'AccountSid' => data['InitiatingProcessAccountSid'])
+      account_data.delete('IsLocalAdmin')
+      identity(event, account_data)
+      copy_fields(event, data, {
+        'LocalIP' => '[soc][network][local_ip]', 'LocalPort' => '[soc][network][local_port]',
+        'RemoteIP' => '[soc][network][remote_ip]', 'RemotePort' => '[soc][network][remote_port]',
+        'RemoteUrl' => '[soc][network][remote_url]', 'LocalIPType' => '[soc][network][local_ip_type]',
+        'RemoteIPType' => '[soc][network][remote_ip_type]'
+      })
+      protocol = normalized(data['Protocol'])
+      event.set('[network][transport]', protocol) if protocol
+      # Local/remoto é perspectiva do sensor, não prova direção da conexão.
+      event.remove('[soc][logon]')
+    else
+      identity(event, data)
+    end
     action = data['ActionType'].to_s
     if dataset == 'devicelogonevents'
       event.set('[event][category]', ['authentication'])
       event.set('[event][type]', ['start'])
       event.set('[event][outcome]', 'success') if action.start_with?('LogonSuccess')
       event.set('[event][outcome]', 'failure') if action.start_with?('LogonFailed')
-    else
+    elsif dataset == 'deviceprocessevents'
+      event.set('[event][category]', ['process'])
+      event.set('[event][type]', action == 'ProcessCreated' ? ['start'] : ['info'])
+    elsif dataset == 'devicenetworkevents'
+      event.set('[event][category]', ['network'])
+      event.set('[event][type]', ['info'])
+    elsif action.start_with?('Asr')
       event.set('[event][category]', ['process', 'intrusion_detection'])
+      event.set('[event][type]', ['info'])
+    else
       event.set('[event][type]', ['info'])
     end
     if action.start_with?('Asr')
@@ -334,4 +486,174 @@ test 'cadastro explícito classifica serviço sem inferir pelo nome' do
   parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
   in_event { { 'soc' => { 'entity' => 'event', 'dataset' => 'devicelogonevents' }, 'defender' => { 'DeviceName' => 'srv01', 'DeviceId' => 'd1', 'AccountName' => 'catalogued-service', 'AccountDomain' => 'example' } } }
   expect('classificação e privilégio vêm do catálogo') { |events| events[0].get('[soc][identity][type]') == 'service' && events[0].get('[soc][identity][classification_source]') == 'catalog' && events[0].get('[soc][identity][privileged]') == false }
+end
+
+test 'processo criado fica em process e iniciador em parent' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    { 'soc' => { 'entity' => 'event', 'dataset' => 'deviceprocessevents' }, 'defender' => {
+      'DeviceName' => 'SRV-PROCESS', 'DeviceId' => 'D-PROCESS', 'ActionType' => 'ProcessCreated',
+      'FileName' => 'powershell.exe', 'FolderPath' => 'C:\\Windows', 'ProcessCommandLine' => 'powershell -nop',
+      'ProcessId' => 100, 'ProcessUniqueId' => 'created-100', 'ProcessCreationTime' => '2026-10-21T12:00:00Z',
+      'SHA1' => 'abc', 'SHA256' => 'def', 'AccountName' => 'child-account', 'AccountDomain' => 'example',
+      'InitiatingProcessFileName' => 'cmd.exe', 'InitiatingProcessId' => 90,
+      'InitiatingProcessUniqueId' => 'parent-90', 'InitiatingProcessAccountName' => 'parent-account' } }
+  end
+  expect('processos, identidades e categoria não se confundem') do |events|
+    e = events.first
+    e.get('[process][name]') == 'powershell.exe' && e.get('[process][parent][name]') == 'cmd.exe' &&
+      e.get('[process][entity_id]') == 'created-100' && e.get('[process][parent][entity_id]') == 'parent-90' &&
+      e.get('[process][executable]') == 'C:\\Windows\\powershell.exe' &&
+      e.get('[process][hash][sha1]') == 'abc' && e.get('[process][hash][sha256]') == 'def' &&
+      e.get('[user][name]') == 'child-account' && e.get('[process][parent][user][name]') == 'parent-account' &&
+      e.get('[event][category]') == ['process'] && e.get('[event][type]') == ['start']
+  end
+end
+
+test 'PID sem UniqueId não inventa identidade da instância' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event { { 'soc' => { 'entity' => 'event', 'dataset' => 'deviceprocessevents' }, 'defender' => { 'DeviceName' => 'srv01', 'ProcessId' => 10, 'InitiatingProcessId' => 5 } } }
+  expect('entity_id permanece ausente') { |events| events[0].get('[process][pid]') == 10 && events[0].get('[process][entity_id]').nil? && events[0].get('[process][parent][entity_id]').nil? }
+end
+
+test 'rede usa processo e conta iniciadores e endpoints locais e remotos sem direção presumida' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    { 'soc' => { 'entity' => 'event', 'dataset' => 'devicenetworkevents' }, 'defender' => {
+      'DeviceName' => 'fisico01', 'DeviceId' => 'd1', 'ActionType' => 'ConnectionSuccess', 'Protocol' => 'Tcp',
+      'LocalIP' => '10.0.0.1', 'LocalPort' => 53000, 'RemoteIP' => '203.0.113.1', 'RemotePort' => 443,
+      'RemoteUrl' => 'example.test', 'LocalIPType' => 'Private', 'RemoteIPType' => 'Public',
+      'AccountName' => 'wrong-account', 'AccountDomain' => 'wrong-domain',
+      'InitiatingProcessFileName' => 'browser.exe', 'InitiatingProcessUniqueId' => 'network-process',
+      'InitiatingProcessAccountName' => 'network-user', 'InitiatingProcessAccountDomain' => 'example' } }
+  end
+  expect('perspectiva local, identidade iniciadora e categoria rede') do |events|
+    e = events.first
+    e.get('[soc][network][local_ip]') == '10.0.0.1' && e.get('[soc][network][remote_port]') == 443 &&
+      e.get('[soc][network][remote_url]') == 'example.test' && e.get('[network][transport]') == 'tcp' &&
+      e.get('[user][name]') == 'network-user' && e.get('[process][entity_id]') == 'network-process' &&
+      e.get('[event][category]') == ['network'] && e.get('[event][outcome]').nil? &&
+      e.get('[network][direction]').nil? && e.get('[network][bytes]').nil? &&
+      e.get('[source][ip]').nil? && e.get('[destination][ip]').nil?
+  end
+end
+
+test 'evento genérico não é classificado como detecção de intrusão' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event { { 'soc' => { 'entity' => 'event', 'dataset' => 'deviceevents' }, 'defender' => { 'DeviceName' => 'srv01', 'ActionType' => 'SomeOtherEvent' } } }
+  expect('sem categoria inferida') { |events| events[0].get('[event][category]').nil? }
+end
+
+test 'ASR preserva a categoria específica' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event { { 'soc' => { 'entity' => 'event', 'dataset' => 'deviceevents' }, 'defender' => { 'DeviceName' => 'srv01', 'ActionType' => 'AsrOfficeChildProcessBlocked' } } }
+  expect('categoria e modo do evento ASR') { |events| events[0].get('[event][category]').include?('intrusion_detection') && events[0].get('[soc][asr][mode]') == 'block' }
+end
+
+test 'postura vulnerabilidade preserva ausência de exploit e pontuação' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    { '@metadata' => { 'doc_id' => 'stable-vulnerability' }, 'soc' => { 'entity' => 'posture', 'dataset' => 'devicetvmsoftwarevulnerabilities' },
+      'defender' => { 'DeviceName' => 'srv01', 'DeviceId' => 'd1', 'CveId' => 'CVE-2099-0001',
+        'VulnerabilitySeverityLevel' => 'Critical', 'SoftwareName' => 'app', 'SoftwareVersion' => '1',
+        'SOCActive' => true, 'SOCState' => 'observed', 'SOCSnapshotAt' => '2026-10-21T12:00:00Z' } }
+  end
+  expect('índice atual versionado, chave estável e campos opcionais desconhecidos') do |events|
+    e = events.first
+    e.get('[@metadata][index]') == 'soc-posture' && e.get('[@metadata][doc_id]') == 'stable-vulnerability' &&
+      e.get('[@metadata][version]') == '1792584000000' && e.get('[soc][posture][active]') == true &&
+      e.get('[soc][posture][kind]') == 'vulnerability' && e.get('[vulnerability][severity]') == 'critical' &&
+      e.get('[package][name]') == 'app' && e.get('[soc][posture][exploit_available]').nil? &&
+      e.get('[vulnerability][score][base]').nil?
+  end
+end
+
+test 'postura configuração conserva falsos e contexto JSON' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    { 'soc' => { 'entity' => 'posture', 'dataset' => 'devicetvmsecureconfigurationassessment' }, 'defender' => {
+      'DeviceName' => 'fisico01', 'DeviceId' => 'd1', 'ConfigurationId' => 'scid-test', 'ConfigurationName' => 'Test',
+      'ConfigurationCategory' => 'SecurityControls', 'IsApplicable' => true, 'IsCompliant' => false,
+      'Timestamp' => '2026-10-20T11:00:00Z',
+      'Context' => '[{"av":"passive"}]', 'SOCActive' => true, 'SOCState' => 'observed', 'SOCSnapshotAt' => '2026-10-21T12:00:00Z' } }
+  end
+  expect('falso não vira desconhecido e contexto é objeto para flattened') do |events|
+    e = events.first
+    e.get('[soc][posture][is_compliant]') == false && e.get('[soc][posture][is_applicable]') == true &&
+      e.get('[soc][posture][context][items]')[0]['av'] == 'passive' &&
+      e.get('[soc][posture][configuration_id]') == 'scid-test' &&
+      e.get('[soc][posture][assessed_at]') == '2026-10-20T11:00:00Z' &&
+      e.get('[soc][posture][snapshot_at]') == '2026-10-21T12:00:00Z'
+  end
+end
+
+test 'CVSS numérico válido é convertido e inválido não é inventado como zero' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    ['9.8', 'N/A', 0, 11].map do |score|
+      { 'soc' => { 'entity' => 'posture', 'dataset' => 'devicetvmsoftwarevulnerabilities' },
+        'defender' => { 'DeviceName' => 'srv01', 'DeviceId' => 'd1', 'CvssScore' => score,
+          'SOCActive' => true, 'SOCSnapshotAt' => '2026-10-21T12:00:00Z' } }
+    end
+  end
+  expect('somente valores finitos entre zero e dez no campo numérico') do |events|
+    events[0].get('[vulnerability][score][base]') == 9.8 &&
+      events[1].get('[vulnerability][score][base]').nil? &&
+      events[1].get('[defender][CvssScore]') == 'N/A' &&
+      events[2].get('[vulnerability][score][base]') == 0.0 &&
+      events[3].get('[vulnerability][score][base]').nil?
+  end
+end
+
+test 'tombstone de postura é estado retirado, não resolução comprovada' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    { 'soc' => { 'entity' => 'posture', 'dataset' => 'devicetvmsoftwarevulnerabilities' }, 'defender' => {
+      'DeviceName' => 'srv01', 'DeviceId' => 'd1', 'CveId' => 'CVE-2099-0002',
+      'SOCActive' => false, 'SOCState' => 'no_longer_reported', 'SOCSnapshotAt' => '2026-10-21T13:00:00Z' } }
+  end
+  expect('não perde falso nem inventa remediação') { |events| events[0].get('[soc][posture][active]') == false && events[0].get('[soc][posture][state]') == 'no_longer_reported' && events[0].get('[@metadata][version]') == '1792587600000' }
+end
+
+test 'postura fora do escopo não é publicada' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event { { 'soc' => { 'entity' => 'posture' }, 'defender' => { 'DeviceName' => 'srv-note-excluded' } } }
+  expect('note prevalece no snapshot também') { |events| events.empty? }
+end
+
+test 'postura sem snapshot ou estado conhecido não sobrescreve índice atual' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event { { 'soc' => { 'entity' => 'posture', 'dataset' => 'devicetvmsoftwarevulnerabilities' }, 'defender' => { 'DeviceName' => 'srv01', 'DeviceId' => 'd1', 'SOCActive' => true } } }
+  expect('não publica snapshot sem versão') { |events| events.empty? }
+end
+
+test 'inventário tem exposição opcional sem tratar desconhecido como falso' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    [ { 'DeviceName' => 'srv01', 'ExposureLevel' => 'High', 'AssetValue' => 'High', 'IsInternetFacing' => true },
+      { 'DeviceName' => 'srv02' } ].map { |d| { 'soc' => { 'entity' => 'device' }, 'defender' => d } }
+  end
+  expect('exposição normalizada e ausência preservada') do |events|
+    events[0].get('[soc][asset][exposure_level]') == 'high' && events[0].get('[soc][asset][internet_facing]') == true &&
+      events[1].get('[soc][asset][internet_facing]').nil? && events[1].get('[soc][asset][exposure_level]').nil?
+  end
+end
+
+test 'hora local de Brasília, fora do horário e conta genérica' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    [ ['2026-10-21T12:00:00Z', 'Administrador'], ['2026-10-22T03:30:00Z', 'joao.silva'], ['2026-10-24T15:00:00Z', 'admin2'] ].map do |ts, account|
+      { '@timestamp' => ts, 'soc' => { 'entity' => 'event', 'dataset' => 'devicelogonevents' },
+        'defender' => { 'DeviceName' => 'srv01', 'DeviceId' => 'd1', 'AccountName' => account, 'AccountDomain' => 'example', 'ActionType' => 'LogonSuccess' } }
+    end
+  end
+  expect('quarta 09h dentro do horário; quinta 00h30 fora; sábado fora') do |events|
+    events[0].get('[soc][time][local_hour]') == 9 && events[0].get('[soc][time][off_hours]') == false &&
+      events[1].get('[soc][time][local_hour]') == 0 && events[1].get('[soc][time][off_hours]') == true &&
+      events[2].get('[soc][time][weekend]') == true && events[2].get('[soc][time][off_hours]') == true
+  end
+  expect('nomes genéricos sem considerar caixa ou sufixo numérico') do |events|
+    events[0].get('[soc][identity][generic]') == true && events[1].get('[soc][identity][generic]') == false &&
+      events[2].get('[soc][identity][generic]') == true
+  end
 end

@@ -1,0 +1,19 @@
+// FileName/Process* descrevem o processo criado; InitiatingProcess* descrevem o iniciador.
+DeviceProcessEvents
+| where Timestamp >= datetime({{start}}) and Timestamp < datetime({{end}})
+| where (DeviceName contains "srv" or DeviceName contains "fisico")
+    and DeviceName !contains "note" and DeviceName !contains "micro"
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType,
+          FileName, FolderPath, SHA1, SHA256, MD5, FileSize,
+          ProcessId, ProcessCommandLine, ProcessCreationTime, ProcessIntegrityLevel, ProcessTokenElevation,
+          ProcessUniqueId = column_ifexists("ProcessUniqueId", ""),
+          AccountDomain, AccountName, AccountSid, AccountUpn, AccountObjectId, LogonId,
+          ProcessVersionInfoCompanyName, ProcessVersionInfoProductName, ProcessVersionInfoProductVersion,
+          ProcessVersionInfoOriginalFileName,
+          InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessFolderPath,
+          InitiatingProcessCommandLine, InitiatingProcessCreationTime,
+          InitiatingProcessSHA1, InitiatingProcessSHA256,
+          InitiatingProcessUniqueId = column_ifexists("InitiatingProcessUniqueId", ""),
+          InitiatingProcessAccountName, InitiatingProcessAccountDomain, InitiatingProcessAccountSid,
+          InitiatingProcessAccountUpn, InitiatingProcessParentId, InitiatingProcessParentFileName,
+          InitiatingProcessParentCreationTime, AdditionalFields

@@ -149,6 +149,10 @@ GRAPH_CLIENT_ID=00000000-0000-0000-0000-000000000000
         if ($LASTEXITCODE -ne 0) { throw 'pacote Kibana desatualizado' }
         docker run --rm -v "${root}:/repo:ro" -w /repo $NodeImage node --test kibana/test/package.test.mjs
     }
+
+    Invoke-Step 'Elasticsearch: contratos de campos e estado atual' {
+        docker run --rm -v "${root}:/repo:ro" -w /repo $NodeImage node --test elasticsearch/test/mappings.test.mjs
+    }
 }
 finally {
     docker rm -f $pg 2>$null | Out-Null

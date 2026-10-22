@@ -5,6 +5,9 @@ DeviceInfo
 | where (DeviceName contains "srv" or DeviceName contains "fisico")
     and DeviceName !contains "note" and DeviceName !contains "micro"
 | project Timestamp, DeviceId, DeviceName, OSPlatform, DeviceType, MachineGroup,
-          OnboardingStatus, SensorHealthState
+          OnboardingStatus, SensorHealthState,
+          ExposureLevel = column_ifexists("ExposureLevel", ""),
+          AssetValue = column_ifexists("AssetValue", ""),
+          IsInternetFacing = column_ifexists("IsInternetFacing", bool(null))
 // O coletor falha se receber 10000 linhas: nunca assume que este limite é completude.
 | take 10000

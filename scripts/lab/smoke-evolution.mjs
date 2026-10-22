@@ -121,8 +121,27 @@ try {
   sql(fs.readFileSync(path.join(root,'scripts/lab/dados-sinteticos.sql'),'utf8'));
   sql(fs.readFileSync(path.join(root,'scripts/lab/cenarios-deteccao.sql'),'utf8'));
   sql(fs.readFileSync(path.join(root,'scripts/lab/evolution-smoke.sql'),'utf8'));
+  sql(fs.readFileSync(path.join(root,'scripts/lab/process-posture-smoke.sql'),'utf8'));
+  sql(fs.readFileSync(path.join(root,'scripts/lab/process-posture-metrics.sql'),'utf8'));
   compose(['up','-d','--wait','--wait-timeout','240','es01']);
+  // O healthcheck do container confirma o HTTP/autenticação; o primeiro master
+  // ainda pode estar em eleição. Aguarda o cluster antes de criar índices.
+  let clusterReady=false;
+  for(let i=0;i<60;i++) {
+    try {
+      const health=es('GET','/_cluster/health?wait_for_status=yellow&timeout=1s');
+      if(['green','yellow'].includes(health.status)&&!health.timed_out) { clusterReady=true; break; }
+    } catch {}
+    await sleep(2000);
+  }
+  if(!clusterReady)throw new Error('Cluster Elasticsearch não ficou pronto para operações de índice');
+  // Exercita atualização aditiva de um índice existente, além de templates novos.
+  es('PUT','/soc-events-upgrade-check',{mappings:{dynamic:false,properties:{
+    '@timestamp':{type:'date'},process:{properties:{name:{type:'keyword'},command_line:{type:'wildcard'}}}
+  }}});
   compose(['run','--rm','setup']);
+  const upgraded=es('GET','/soc-events-upgrade-check/_mapping')['soc-events-upgrade-check'].mappings.properties;
+  if(upgraded.process.properties.name.type!=='keyword'||upgraded.process.properties.parent.properties.entity_id.type!=='keyword'||upgraded.soc.properties.posture.properties.active.type!=='boolean')throw new Error('Mappings de índice existente não foram ampliados');
   console.log('Construindo Logstash e iniciando Kibana; sem coletor/Graph.');
   compose(['build','logstash'],{quiet:true});
   compose(['up','-d','--wait','--wait-timeout','300','kibana','logstash']);
@@ -134,7 +153,8 @@ try {
     try {
       metrics=es('GET','/soc-metrics-*/_count');
       const devices=es('GET','/soc-devices/_count');
-      if(metrics.count>0&&devices.count===2)break;
+      const posture=es('GET','/soc-posture/_count');
+      if(metrics.count>0&&devices.count===2&&posture.count===4)break;
     } catch {}
     await sleep(3000);
   }
@@ -142,14 +162,34 @@ try {
   if(scoped.count!==0)throw new Error('Máquinas excluídas chegaram ao índice');
   const inventory=es('GET','/soc-devices/_count');
   if(inventory.count!==2)throw new Error('Inventário sintético incompleto');
+  const processes=es('POST','/soc-events-*/_search',{query:{term:{'event.dataset':'defender.deviceprocessevents'}},size:10});
+  if(processes.hits.total.value!==2)throw new Error('Escopo de processos incorreto');
+  for(const { _source:p } of processes.hits.hits) {
+    if(p.process.name!=='powershell.exe'||p.process.parent.name!=='cmd.exe'||p.process.entity_id!=='created-4200'||p.user.name!=='operator')throw new Error('Processo criado e iniciador foram confundidos');
+  }
+  const connections=es('POST','/soc-events-*/_search',{query:{term:{'event.dataset':'defender.devicenetworkevents'}},size:10});
+  if(connections.hits.total.value!==2)throw new Error('Escopo de rede incorreto');
+  for(const { _source:n } of connections.hits.hits) {
+    if(n.soc.network.remote_ip!=='203.0.113.8'||n.soc.network.remote_port!==443||n.process.name!=='powershell.exe'||n.user.name!=='network-account'||n.network.direction||n.network.bytes)throw new Error('Perspectiva local/remota ou processo de rede incorreto');
+  }
+  const postureScoped=es('POST','/soc-posture/_count',{query:{terms:{'host.name':['srv-note-excluded','fisico-micro-excluded']}}});
+  if(postureScoped.count!==0)throw new Error('Máquinas excluídas chegaram à postura');
+  const active=es('POST','/soc-posture/_count',{query:{term:{'soc.posture.active':true}}});
+  if(active.count!==3)throw new Error('Postura atual não refletiu tombstone');
+  const removed=es('GET','/soc-posture/_doc/smoke-vuln-removed')._source;
+  if(removed.soc.posture.active!==false||removed.soc.posture.state!=='no_longer_reported')throw new Error('Republicação antiga ressuscitou vulnerabilidade retirada');
+  const exposed=es('GET','/soc-devices/_doc/smoke-observed')._source;
+  if(exposed.soc.asset.internet_facing!==true||exposed.soc.asset.exposure_level!=='high')throw new Error('Exposição não normalizada');
   const oldIncident=es('GET','/soc-incidents/_doc/smoke-old-active');
   if(!oldIncident.found||oldIncident._source.soc.object.status!=='active')throw new Error('Estado antigo ativo ausente');
   const identities=es('POST','/soc-events-*/_search',{size:0,query:{prefix:{'host.id':'smoke-host-'}},aggs:{identities:{terms:{field:'soc.identity.correlation_key',size:20}}}});
   if(identities.aggregations.identities.buckets.length!==4)throw new Error('Contas de domínios/hosts distintos foram misturadas ou eventos ausentes');
   const datasets=es('POST','/soc-metrics-*/_search',{size:0,aggs:{datasets:{terms:{field:'event.dataset'}}}}).aggregations.datasets.buckets.map(b=>b.key);
-  for(const required of ['soc.database_capacity','soc.elasticsearch_capacity'])if(!datasets.includes(required))throw new Error(`Métrica ausente: ${required}`);
-  console.log('APROVADO: importação Kibana, migrações, ingestão TLS, identidades, exclusões e capacidade PG/ES.');
-  fs.writeFileSync(path.join(dir,'result.json'),JSON.stringify({status:'passed',datasets,identities:4,excluded:scoped.count}));
+  for(const required of ['soc.database_capacity','soc.elasticsearch_capacity','soc.collector_status'])if(!datasets.includes(required))throw new Error(`Métrica ausente: ${required}`);
+  const latestFailure=es('POST','/soc-metrics-*/_search',{size:1,sort:[{'@timestamp':'desc'}],query:{term:{'soc.metrics.source':'snapshot.devicetvmsoftwarevulnerabilities'}}}).hits.hits[0]?._source;
+  if(latestFailure?.soc.metrics.status!=='failed'||latestFailure.soc.metrics.lag_seconds<7*3600)throw new Error('Falha recente ou checkpoint antigo de postura não estão visíveis');
+  console.log('APROVADO: importação Kibana, migrações, ingestão TLS, identidades, exclusões, capacidade PG/ES, processos, rede e postura atual.');
+  fs.writeFileSync(path.join(dir,'result.json'),JSON.stringify({status:'passed',datasets,identities:4,excluded:scoped.count,processes:processes.hits.total.value,connections:connections.hits.total.value,postureActive:active.count,postureExcluded:postureScoped.count}));
   success=true;
 } finally {
   if(process.argv.includes('--keep')) {
