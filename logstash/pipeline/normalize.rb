@@ -219,7 +219,10 @@ end
 
 def filter(event)
   return elastic_metrics(event) if event.get('[@metadata][metric_input]') == 'elasticsearch'
-  data = event.get('defender') || {}
+  # O Advanced Hunting via Graph devolve colunas nulas como objeto vazio ({}).
+  # Copiado para campos numéricos/keyword/date, o {} faz o Elasticsearch recusar o
+  # documento inteiro (ignore_malformed não cobre objetos). Tratar como ausente.
+  data = (event.get('defender') || {}).reject { |_, value| (value.is_a?(Hash) || value.is_a?(Array)) && value.empty? }
   entity = event.get('[soc][entity]')
   dataset = event.get('[soc][dataset]')
   event.set('[ecs][version]', '8.17.0')
@@ -743,5 +746,29 @@ test 'datetime nulo do Graph ({}) e IDs zero não viram campos inválidos' do
     e = events.first
     e.get('[process][start]').nil? && e.get('[process][entity_id]').nil? && e.get('[process][pid]').nil? &&
       e.get('[process][parent][start]').nil? && e.get('[soc][network][remote_port]') == 443
+  end
+end
+
+test 'colunas nulas do Graph ({}) não viram campos numéricos, keyword ou data' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    [
+      { 'soc' => { 'entity' => 'event', 'dataset' => 'devicelogonevents' },
+        'defender' => { 'DeviceName' => 'srv32', 'DeviceId' => 'd32', 'AccountName' => 'svc.backup', 'AccountDomain' => 'example',
+                        'ActionType' => 'LogonFailed', 'LogonType' => 'Batch', 'LogonId' => {}, 'RemotePort' => {},
+                        'RemoteIP' => {}, 'InitiatingProcessId' => {}, 'FailureReason' => 'InvalidUserNameOrPassword' } },
+      { 'soc' => { 'entity' => 'event', 'dataset' => 'deviceprocessevents' },
+        'defender' => { 'DeviceName' => 'srv03', 'DeviceId' => 'd3', 'ProcessId' => 10, 'ProcessCreationTime' => {},
+                        'InitiatingProcessId' => {} } }
+    ]
+  end
+  expect('falha de logon mantém resultado e descarta os {}') do |events|
+    e = events[0]
+    e.get('[event][outcome]') == 'failure' && e.get('[winlog][logon][type]') == 'Batch' &&
+      e.get('[winlog][logon][id]').nil? && e.get('[source][port]').nil? && e.get('[source][ip]').nil? &&
+      e.get('[process][pid]').nil? && e.get('[event][reason]') == 'InvalidUserNameOrPassword'
+  end
+  expect('processo sem data de criação não recebe objeto em process.start') do |events|
+    events[1].get('[process][pid]') == 10 && events[1].get('[process][start]').nil?
   end
 end

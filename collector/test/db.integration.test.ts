@@ -306,13 +306,15 @@ describe.skipIf(!host)('PostgreSQL (integração)', () => {
     }
   });
   it('insights: exigem snapshots, publicam na mesma transação e encerram como no_longer_reported', async () => {
-    const snap = (name: string, table: string) => ({ name, type: 'snapshot', table, queryFile: 'q.kql', maxRows: 100 });
+    // Cada fonte com a consulta da própria tabela: o coletor recusa consulta de outra tabela.
+    const snap = (name: string, table: string) => ({ name, type: 'snapshot', table, queryFile: `${table.toLowerCase()}.kql`, maxRows: 100 });
     const parsed = parseSources({ sources: [
       snap('test.insights.vuln', 'DeviceTvmSoftwareVulnerabilities'),
       snap('test.insights.config', 'DeviceTvmSecureConfigurationAssessment'),
       { name: 'test.insights', type: 'insights', vulnerabilitySource: 'test.insights.vuln',
         configurationSource: 'test.insights.config', softwareInventorySource: null },
-    ] }, (f) => (f === 'q.kql' ? 'DeviceTvmSoftwareVulnerabilities' : ''));
+    ] }, (f) => ({ 'devicetvmsoftwarevulnerabilities.kql': 'DeviceTvmSoftwareVulnerabilities',
+      'devicetvmsecureconfigurationassessment.kql': 'DeviceTvmSecureConfigurationAssessment' })[f] ?? '');
     const vulnSrc = parsed[0] as SnapshotSourceConfig;
     const configSrc = { ...vulnSrc, name: 'test.insights.config', table: 'DeviceTvmSecureConfigurationAssessment' } as SnapshotSourceConfig;
     const src = parsed[2] as InsightsSourceConfig;
