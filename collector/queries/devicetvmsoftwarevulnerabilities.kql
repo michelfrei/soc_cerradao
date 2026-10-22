@@ -5,12 +5,13 @@ DeviceTvmSoftwareVulnerabilities
 | join kind=leftouter (
     DeviceTvmSoftwareVulnerabilitiesKB
     | summarize arg_max(LastModifiedTime, *) by CveId
-    | project CveId, CvssScore, IsExploitAvailable, VulnerabilityDescription, PublishedDate, LastModifiedTime
+    | project CveId, CvssScore, IsExploitAvailable, PublishedDate, LastModifiedTime
 ) on CveId
 | project DeviceId, DeviceName, OSPlatform, OSVersion, OSArchitecture,
           SoftwareVendor, SoftwareName, SoftwareVersion, CveId, VulnerabilitySeverityLevel,
           RecommendedSecurityUpdate, RecommendedSecurityUpdateId, CveTags,
-          CvssScore, IsExploitAvailable, VulnerabilityDescription, PublishedDate, LastModifiedTime
-// O marcador de partição vira o filtro hash(DeviceId) de cada parte (sources.json "partitions").
+          CvssScore, IsExploitAvailable, PublishedDate, LastModifiedTime
+// O marcador de partição vira o filtro hash de cada parte (sources.json "partitions"/"partitionBy").
+// A descrição da CVE fica fora para reduzir o volume; consulte-a pelo CveId.
 // >=10000 por parte é recusado pelo coletor. O sentinela extra nunca permite snapshot truncado.
 | take 10001

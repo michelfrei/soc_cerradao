@@ -68,7 +68,8 @@
       "enabled": true,
       "intervalSeconds": 21600,
       "maxRows": 10000,
-      "partitions": 8
+      "partitions": 32,
+      "partitionBy": "strcat(DeviceId, '|', CveId)"
     },
     {
       "name": "snapshot.devicetvmsecureconfigurationassessment",

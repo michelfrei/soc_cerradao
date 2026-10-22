@@ -44,8 +44,13 @@ def boolean(value)
   nil
 end
 
+# O Graph devolve {} para datetime nulo (ex.: InitiatingProcessCreationTime): vazio é ausente.
+def blank(value)
+  value.nil? || value == '' || ((value.is_a?(Hash) || value.is_a?(Array)) && value.empty?)
+end
+
 def copy_fields(event, data, fields)
-  fields.each { |src, dst| event.set(dst, data[src]) unless data[src].nil? || data[src] == '' }
+  fields.each { |src, dst| event.set(dst, data[src]) unless blank(data[src]) }
 end
 
 def executable_path(folder, name)
@@ -71,6 +76,10 @@ def process_fields(event, data, prefix = '', target = '[process]')
     "#{prefix}AccountSid" => 'user][id'
   }
   copy_fields(event, data, map.transform_values { |dst| "#{target}[#{dst}]" })
+  # 0 é o valor do Defender para instância/PID desconhecidos; não serve para correlação.
+  event.remove("#{target}[entity_id]") if event.get("#{target}[entity_id]").to_s == '0'
+  event.remove("#{target}[pid]") if event.get("#{target}[pid]").to_s == '0'
+  event.remove("#{target}[start]") unless event.get("#{target}[start]").nil? || event.get("#{target}[start]").is_a?(String)
   executable = executable_path(data["#{prefix}FolderPath"], data["#{prefix}FileName"])
   event.set("#{target}[executable]", executable) if executable
 end
@@ -719,5 +728,20 @@ test 'postura de software preserva fim de suporte' do
     e.get('[soc][posture][kind]') == 'software' && e.get('[event][category]') == ['package'] &&
       e.get('[package][name]') == 'jre' && e.get('[soc][posture][end_of_support_status]') == 'EOS Software' &&
       e.get('[soc][posture][end_of_support_date]') == '2022-07-19T00:00:00Z' && e.get('[@metadata][index]') == 'soc-posture'
+  end
+end
+
+test 'datetime nulo do Graph ({}) e IDs zero não viram campos inválidos' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    { 'soc' => { 'entity' => 'event', 'dataset' => 'devicenetworkevents' }, 'defender' => {
+      'DeviceName' => 'srv02fisico', 'DeviceId' => 'd1', 'ActionType' => 'ConnectionAcknowledged', 'Protocol' => 'TcpV4',
+      'InitiatingProcessCreationTime' => {}, 'InitiatingProcessParentCreationTime' => {},
+      'InitiatingProcessUniqueId' => '0', 'InitiatingProcessId' => 0, 'RemoteIP' => '203.0.113.1', 'RemotePort' => 443 } }
+  end
+  expect('sem process.start/entity_id/pid quando desconhecidos') do |events|
+    e = events.first
+    e.get('[process][start]').nil? && e.get('[process][entity_id]').nil? && e.get('[process][pid]').nil? &&
+      e.get('[process][parent][start]').nil? && e.get('[soc][network][remote_port]') == 443
   end
 end

@@ -74,6 +74,8 @@ const SnapshotSource = BaseSource.extend({
   maxRows: z.number().int().min(100).max(10_000).default(10_000),
   // Consultas por hash(DeviceId): cada parte respeita maxRows; o snapshot só vale com todas.
   partitions: z.number().int().min(1).max(64).default(1),
+  // Expressão KQL do hash; deve incluir DeviceId e só colunas da identidade da linha.
+  partitionBy: z.string().regex(/^[A-Za-z0-9_(), '|]+$/).refine((e) => e.includes('DeviceId'), 'partitionBy precisa incluir DeviceId').default('DeviceId'),
 });
 
 const InsightsSource = BaseSource.extend({

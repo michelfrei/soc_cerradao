@@ -142,6 +142,11 @@ describe('snapshot particionado por dispositivo', () => {
   it('marcador vira filtro hash(DeviceId) por parte; sem partição some', () => {
     expect(partitionQuery('T {{partition}} | take 1', 4, 3)).toBe('T | where hash(DeviceId, 4) == 3 | take 1');
     expect(partitionQuery('T {{partition}} | take 1', 1, 0)).toBe('T  | take 1');
+    expect(partitionQuery('T {{partition}}', 32, 5, "strcat(DeviceId, '|', CveId)")).toBe("T | where hash(strcat(DeviceId, '|', CveId), 32) == 5");
+    const bad = (partitionBy: string) => () => parseSources({ sources: [{ name: 's', type: 'snapshot', table: 'DeviceTvmSoftwareVulnerabilities',
+      queryFile: 'q.kql', partitions: 2, partitionBy }] }, () => 'DeviceTvmSoftwareVulnerabilities {{partition}}');
+    expect(bad('CveId')).toThrow(/DeviceId/);
+    expect(bad('DeviceId; drop')).toThrow();
     expect(() => parseSources({ sources: [{ name: 's', type: 'snapshot', table: 'DeviceTvmSoftwareVulnerabilities',
       queryFile: 'q.kql', partitions: 2 }] }, () => 'DeviceTvmSoftwareVulnerabilities | take 1')).toThrow(/\{\{partition\}\}/);
   });

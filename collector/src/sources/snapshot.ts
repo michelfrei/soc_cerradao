@@ -38,9 +38,9 @@ export function postureKey(table: SnapshotSourceConfig['table'], row: Record<str
   return sha256(canonicalJson([table.toLowerCase(), device, ...identity]));
 }
 
-/** Parte k de N por hash(DeviceId): um dispositivo fica sempre na mesma parte. */
-export function partitionQuery(query: string, partitions: number, k: number): string {
-  return query.replace('{{partition}}', partitions > 1 ? `| where hash(DeviceId, ${partitions}) == ${k}` : '');
+/** Parte k de N por hash da identidade: a mesma linha cai sempre na mesma parte. */
+export function partitionQuery(query: string, partitions: number, k: number, by = 'DeviceId'): string {
+  return query.replace('{{partition}}', partitions > 1 ? `| where hash(${by}, ${partitions}) == ${k}` : '');
 }
 
 /** Valida completude antes de filtrar escopo, deduplicar ou tocar no PostgreSQL. */
@@ -117,7 +117,7 @@ export async function collectSnapshot(
   for (let k = 0; k < src.partitions; k++) {
     const label = src.partitions > 1 ? `${src.name} (parte ${k + 1}/${src.partitions})` : src.name;
     const response = await deps.graph.request('POST', '/security/runHuntingQuery', counters,
-      { Query: partitionQuery(src.query, src.partitions, k) });
+      { Query: partitionQuery(src.query, src.partitions, k, src.partitionBy) });
     try {
       results.push(...completeHuntingResults(response, src.maxRows, label));
     } catch (err) {
