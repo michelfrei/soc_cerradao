@@ -1,0 +1,19 @@
+{
+  "index_patterns": [
+    "soc-insights"
+  ],
+  "priority": 210,
+  "composed_of": [
+    "soc-insights-mappings"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "10s"
+    }
+  },
+  "_meta": {
+    "description": "Insights de remediação (um documento por insight_id estável). Estado atual com versão externa do cálculo; sem ILM temporal. Mapeamento próprio: campos na raiz conforme o contrato schema_version 1.0."
+  }
+}

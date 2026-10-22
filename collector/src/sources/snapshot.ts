@@ -32,7 +32,9 @@ export function postureKey(table: SnapshotSourceConfig['table'], row: Record<str
   const device = required(row, 'DeviceId');
   const identity = table === 'DeviceTvmSoftwareVulnerabilities'
     ? [required(row, 'CveId'), required(row, 'SoftwareName'), component(row, 'SoftwareVendor'), component(row, 'SoftwareVersion')]
-    : [required(row, 'ConfigurationId'), context(row.Context)];
+    : table === 'DeviceTvmSoftwareInventory'
+      ? [required(row, 'SoftwareName'), component(row, 'SoftwareVendor'), component(row, 'SoftwareVersion')]
+      : [required(row, 'ConfigurationId'), context(row.Context)];
   return sha256(canonicalJson([table.toLowerCase(), device, ...identity]));
 }
 

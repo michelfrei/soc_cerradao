@@ -10,6 +10,10 @@ import { collectHunting, toEventRow } from '../src/sources/hunting.js';
 import { toObjectRow } from '../src/sources/objects.js';
 import { collectInventory } from '../src/sources/inventory.js';
 import { collectSnapshot, snapshotRows, storeSnapshot } from '../src/sources/snapshot.js';
+import { storeInsights } from '../src/sources/insights.js';
+import { EMPTY_CATALOG } from '../src/insights/catalog.js';
+import { insightId } from '../src/insights/engine.js';
+import type { InsightsSourceConfig } from '../src/config.js';
 
 const host = process.env.SOC_TEST_PG_HOST;
 const port = Number(process.env.SOC_TEST_PG_PORT ?? 5432);
@@ -300,5 +304,49 @@ describe.skipIf(!host)('PostgreSQL (integração)', () => {
       const result = await collector.query('SELECT device_name FROM soc.raw_event WHERE table_name=$1 AND source=$2', [table, src.name]);
       expect(result.rows).toEqual([{ device_name: 'SRV-UNKNOWN-TO-CATALOG' }]);
     }
+  });
+  it('insights: exigem snapshots, publicam na mesma transação e encerram como no_longer_reported', async () => {
+    const snap = (name: string, table: string) => ({ name, type: 'snapshot', table, queryFile: 'q.kql', maxRows: 100 });
+    const parsed = parseSources({ sources: [
+      snap('test.insights.vuln', 'DeviceTvmSoftwareVulnerabilities'),
+      snap('test.insights.config', 'DeviceTvmSecureConfigurationAssessment'),
+      { name: 'test.insights', type: 'insights', vulnerabilitySource: 'test.insights.vuln',
+        configurationSource: 'test.insights.config', softwareInventorySource: null },
+    ] }, (f) => (f === 'q.kql' ? 'DeviceTvmSoftwareVulnerabilities' : ''));
+    const vulnSrc = parsed[0] as SnapshotSourceConfig;
+    const configSrc = { ...vulnSrc, name: 'test.insights.config', table: 'DeviceTvmSecureConfigurationAssessment' } as SnapshotSourceConfig;
+    const src = parsed[2] as InsightsSourceConfig;
+    const t0 = new Date('2026-12-01T10:00:00Z');
+    const t1 = new Date('2026-12-01T16:00:00Z');
+    const run = (at: Date) => withTransaction(collector, (client) => storeInsights(client, src, EMPTY_CATALOG, at));
+
+    await expect(run(t0)).rejects.toThrow(/sem snapshot concluído/);
+    expect((await collector.query("SELECT 1 FROM soc.collector_checkpoint WHERE source='test.insights'")).rowCount).toBe(0);
+
+    const row = { DeviceId: 'insight-dev', DeviceName: 'srv-insight', CveId: 'CVE-2026-9999',
+      SoftwareVendor: 'insightvendor', SoftwareName: 'insightapp', SoftwareVersion: '1.0', IsExploitAvailable: true };
+    const save = (s: SnapshotSourceConfig, raw: Record<string, unknown>[], at: Date) =>
+      withTransaction(collector, (client) => storeSnapshot(client, s, snapshotRows(s, raw, at), at));
+    await save(vulnSrc, [row], t0);
+    await save(configSrc, [], t0);
+    const before = await lastTxid();
+    const first = await run(t0);
+    expect(first.inserted).toBeGreaterThanOrEqual(1);
+    const id = insightId('application_update', 'insightvendor|insightapp');
+    const state = await collector.query('SELECT status, first_seen, payload FROM soc.remediation_insight WHERE insight_id=$1', [id]);
+    expect(state.rows[0]).toMatchObject({ status: 'open', payload: { exploit_available: true, affected_device_count: 1, cve_ids: ['CVE-2026-9999'] } });
+    const pub = await logstash.query(LOGSTASH_QUERY, [before]);
+    expect(pub.rows.some((r) => r.entity === 'insight' && r.doc_id === id)).toBe(true);
+
+    await save(vulnSrc, [], t1);
+    await run(t1);
+    const closed = await collector.query('SELECT status, first_seen, payload FROM soc.remediation_insight WHERE insight_id=$1', [id]);
+    expect(closed.rows[0]).toMatchObject({ status: 'no_longer_reported', payload: { status: 'no_longer_reported',
+      resolved_at: t1.toISOString(), first_seen: t0.toISOString(), last_seen: t0.toISOString(), affected_device_count: 1 } });
+    // Execução mais antiga não sobrescreve estado mais novo.
+    await expect(run(t0)).rejects.toThrow(/anterior ao último cálculo/);
+    const kept = await collector.query('SELECT status FROM soc.remediation_insight WHERE insight_id=$1', [id]);
+    expect(kept.rows[0].status).toBe('no_longer_reported');
+    await expect(logstash.query('SELECT * FROM soc.remediation_insight')).rejects.toThrow(/permission denied/);
   });
 });

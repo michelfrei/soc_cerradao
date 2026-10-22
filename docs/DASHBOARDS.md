@@ -2,7 +2,7 @@
 
 O pacote `kibana/dist/objects.ndjson` é gerado por `node kibana/build.mjs` e importado no espaço **SOC**, id `soc`, pelo setup. Os links usam `/s/soc/`; não apontam para o espaço padrão. A importação atualiza os objetos com os mesmos IDs. Personalizações locais devem usar **Salvar como** com outro ID.
 
-## Os oito painéis
+## Os nove painéis
 
 | Dashboard | Uso |
 |---|---|
@@ -14,6 +14,7 @@ O pacote `kibana/dist/objects.ndjson` é gerado por `node kibana/build.mjs` e im
 | SOC - Processos e conexões | Processo criado/iniciador, comandos, conta e endpoints local/remoto; correlação por host.id e process.entity_id |
 | SOC - Exposição e proteção | Exposição reportada pelo Defender, CVEs/software, avaliações de configuração, dados desconhecidos e datas das fontes |
 | SOC - Acessos aos servidores | Visão consolidada (porte do painel Grafana): 9 indicadores, 10 pontos de atenção por severidade, tempo, mapa de calor servidor × hora, rankings, negados agrupados e admin em RDP/console, com controles de filtro |
+| SOC - Remediação | Ações que tratam conjuntos de achados TVM: fila priorizada, GPOs propostas, configurações a investigar e detalhes (passos, validação, reversão, lacunas). Ver [INSIGHTS-REMEDIACAO.md](INSIGHTS-REMEDIACAO.md) |
 
 ## Acessos aos servidores
 

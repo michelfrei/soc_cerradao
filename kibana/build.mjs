@@ -23,6 +23,7 @@ const DATA_VIEWS = [
   { id: 'soc-history', title: 'soc-*-history-*', name: 'SOC - Histórico' },
   { id: 'soc-devices', title: 'soc-devices', name: 'SOC - Inventário conhecido', timeless: true },
   { id: 'soc-posture', title: 'soc-posture', name: 'SOC - Postura atual TVM', timeless: true },
+  { id: 'soc-insights', title: 'soc-insights', name: 'SOC - Insights de remediação', timeless: true },
   { id: 'soc-metrics', title: 'soc-metrics-*', name: 'SOC - Coleta e capacidade' },
   { id: 'soc-metrics-current', title: 'soc-metrics-*', name: 'SOC - Últimas execuções sem corte temporal', timeless: true },
   { id: 'soc-elastic-alerts', title: '.alerts-security.alerts-soc', name: 'SOC - Alertas de detecção Elastic' },
@@ -49,7 +50,7 @@ const TERM_TYPES = {
   'soc.asset.expected': 'boolean', 'soc.asset.observed': 'boolean',
   'soc.asset.internet_facing': 'boolean', 'soc.posture.active': 'boolean',
   'soc.posture.is_applicable': 'boolean', 'soc.posture.is_compliant': 'boolean',
-  'soc.posture.exploit_available': 'boolean',
+  'soc.posture.exploit_available': 'boolean', 'exploit_available': 'boolean',
   'source.ip': 'ip', 'destination.ip': 'ip',
   'soc.network.local_ip': 'ip', 'soc.network.remote_ip': 'ip',
   'soc.network.local_port': 'number', 'soc.network.remote_port': 'number',
@@ -73,6 +74,11 @@ const col = {
     isBucketed: false, scale: dataType === 'number' ? 'ratio' : dataType === 'date' ? 'interval' : 'ordinal',
     params: { sortField: '@timestamp', showArrayValues: false },
     filter: { query: `${field} : *`, language: 'kuery' },
+  }),
+  // Um documento por grupo (ex.: insight_id): o máximo é o próprio valor, sem soma.
+  max: (field, label) => ({
+    label, customLabel: true, dataType: 'number', operationType: 'max', sourceField: field,
+    isBucketed: false, scale: 'ratio', params: { emptyAsNull: true },
   }),
   terms: (field, label, size, orderBy, missingBucket = false) => ({
     label, customLabel: true, dataType: TERM_TYPES[field] || 'string', operationType: 'terms', sourceField: field,
@@ -296,7 +302,7 @@ const NAV_ITEMS = [
   ['soc-dashboard-servidor', 'Investigar servidor'], ['soc-dashboard-asr', 'ASR'],
   ['soc-dashboard-cobertura', 'Cobertura e capacidade'],
   ['soc-dashboard-processos-rede', 'Processos e conexões'], ['soc-dashboard-exposicao', 'Exposição e proteção'],
-  ['soc-dashboard-acessos-servidores', 'Acessos aos servidores'],
+  ['soc-dashboard-acessos-servidores', 'Acessos aos servidores'], ['soc-dashboard-remediacao', 'Remediação'],
 ];
 const nav = () => markdown(NAV_ITEMS.map(([id, title]) => `[${title}](/s/soc/app/dashboards#/view/${id})`).join(' · ') +
   '\n\n**Escopo:** nome contém srv ou fisico, exclui note ou micro. Para correlacionar, filtre por **host.id** e **soc.identity.correlation_key**. ' +
@@ -678,8 +684,37 @@ const asv = (() => {
       [['t', lastSeen()]]),
   };
 })();
+// Remediação: um documento por insight_id; estado atual sem corte temporal -----------
+
+const OPEN = 'status : "open"';
+const rem = {
+  open: metric('soc-rem-open', 'Ações de remediação abertas', 'soc-insights', OPEN),
+  p1: metric('soc-rem-p1', 'Abertas com prioridade P1 (crítica)', 'soc-insights', `${OPEN} and priority : "P1"`),
+  exploit: metric('soc-rem-exploit', 'Abertas com exploit disponível reportado', 'soc-insights', `${OPEN} and exploit_available : true`),
+  closed: metric('soc-rem-closed', 'Não mais reportadas (não comprova correção)', 'soc-insights', 'status : "no_longer_reported"'),
+  category: donut('soc-rem-category', 'Ações abertas por tipo de remediação', 'soc-insights', OPEN, 'category', 'Tipo', 7),
+  priority: donut('soc-rem-priority', 'Ações abertas por prioridade', 'soc-insights', OPEN, 'priority', 'Prioridade', 4),
+  queue: table('soc-rem-queue', 'Fila priorizada — top 50 ações abertas', 'soc-insights', OPEN, [
+    ['title.keyword', 'Ação', 50], ['category', 'Tipo', 1], ['priority', 'Prioridade', 1], ['owner', 'Responsável sugerido', 1],
+  ], [['score', col.max('priority_score', 'Pontuação')], ['dev', col.max('affected_device_count', 'Servidores únicos')],
+    ['cves', col.max('cve_count', 'CVEs distintas')]], 'score'),
+  gpo: table('soc-rem-gpo', 'GPOs propostas — política e valor', 'soc-insights', `${OPEN} and category : "gpo_configuration"`, [
+    ['gpo_name', 'GPO sugerida', 20], ['gpo_settings.policy', 'Política', 10], ['gpo_settings.value', 'Valor', 3],
+  ], [['dev', col.max('affected_device_count', 'Servidores únicos')]]),
+  investigation: table('soc-rem-investigation', 'Configurações sem ação validada — investigar e catalogar', 'soc-insights',
+    `${OPEN} and category : "investigation"`, [
+      ['title.keyword', 'Configuração', 30], ['recommendation_ids', 'scid', 1], ['suggested_catalog_key', 'Sugestão do catálogo (não confirmada)', 1],
+    ], [['dev', col.max('affected_device_count', 'Servidores únicos')]]),
+};
+rem.queue.attributes.state.datasourceStates.formBased.layers[LAYER].columns.m.label = 'Documentos (1 por ação)';
+const remediationSearch = search('soc-search-insights', 'Insights detalhados — passos, validação, reversão e lacunas', 'soc-insights', OPEN,
+  ['priority', 'title', 'category', 'remediation_type', 'affected_device_count', 'cve_count', 'recommendation_ids', 'owner', 'effort',
+    'status', 'first_seen', 'last_seen', 'insight_id']);
+remediationSearch.attributes.sort = [['priority_score', 'desc']];
+detailSearches.push(remediationSearch);
+
 const lensObjects = [...Object.values(ov), ...Object.values(ac), ...Object.values(srv), ...Object.values(asr), ...Object.values(cap),
-  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv)];
+  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv), ...Object.values(rem)];
 const dashboards = [
   dashboard('soc-dashboard-overview', 'SOC - Visão operacional', known, [
     [nav(), 0, 0, 48, 5], [markdown(`**${known}** Os incidentes/alertas Defender abrangem o tenant; o escopo de servidores é aplicado aos eventos e ao inventário. Alertas Elastic são detecções executadas neste espaço SOC e obedecem ao período selecionado.`), 0, 5, 48, 5],
@@ -776,6 +811,21 @@ dashboards.push(dashboard('soc-dashboard-acessos-servidores', 'SOC - Acessos aos
     ['host.name', 'Servidor'], ['soc.identity.display', 'Conta'], ['winlog.logon.type', 'Tipo de acesso'],
     ['event.outcome', 'Resultado'], ['source.ip', 'Origem'],
   ]));
+
+dashboards.push(dashboard('soc-dashboard-remediacao', 'SOC - Remediação',
+  'Ações capazes de tratar conjuntos de achados do Defender (GPO, atualização, substituição ou investigação). Estado atual, sem corte temporal.', [
+    [nav(), 0, 0, 48, 5],
+    [markdown('**Um documento por ação (insight_id estável).** Cada achado TVM ativo entra em um único bloco; servidores são contados uma vez por ação, ' +
+      'mas o mesmo servidor aparece em várias ações. **Não some servidores entre linhas.** Prioridade combina exploit disponível, exposição à Internet, ' +
+      'valor do ativo, severidade e abrangência — não só CVSS. Exploit disponível não comprova exploração observada.\n\n' +
+      '**GPO** só aparece quando o scid está vinculado a uma entrada validada do catálogo (`collector/config/remediation-catalog.json`); o resto fica em ' +
+      '**investigação** com a orientação do Defender marcada como não validada. **Não mais reportada** significa que o Defender deixou de reportar os achados, ' +
+      'não prova de correção. Confira `data_gaps` antes de decidir; valores ausentes são desconhecidos, não zero.'), 0, 5, 48, 9],
+    [rem.open, 0, 14, 12, 8], [rem.p1, 12, 14, 12, 8], [rem.exploit, 24, 14, 12, 8], [rem.closed, 36, 14, 12, 8],
+    [rem.category, 0, 22, 24, 15], [rem.priority, 24, 22, 24, 15],
+    [rem.queue, 0, 37, 48, 22], [rem.gpo, 0, 59, 48, 16], [rem.investigation, 0, 75, 48, 16],
+    [remediationSearch, 0, 91, 48, 24],
+  ], 'now-24h'));
 
 // Regras de detecção ---------------------------------------------------------------------
 

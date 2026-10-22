@@ -1,0 +1,264 @@
+{
+  "dynamic": false,
+  "properties": {
+    "@timestamp": {
+      "type": "date"
+    },
+    "schema_version": {
+      "type": "keyword"
+    },
+    "analysis_id": {
+      "type": "keyword"
+    },
+    "insight_id": {
+      "type": "keyword"
+    },
+    "grouping_key": {
+      "type": "keyword"
+    },
+    "source": {
+      "properties": {
+        "name": {
+          "type": "keyword"
+        },
+        "tables": {
+          "type": "keyword"
+        },
+        "finding_ids": {
+          "type": "keyword"
+        },
+        "finding_count": {
+          "type": "integer"
+        },
+        "snapshot_at": {
+          "type": "flattened"
+        }
+      }
+    },
+    "title": {
+      "type": "text",
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 1024
+        }
+      }
+    },
+    "description": {
+      "type": "text"
+    },
+    "category": {
+      "type": "keyword"
+    },
+    "remediation_type": {
+      "type": "keyword"
+    },
+    "priority": {
+      "type": "keyword"
+    },
+    "priority_label": {
+      "type": "keyword"
+    },
+    "priority_score": {
+      "type": "integer"
+    },
+    "risk_rationale": {
+      "type": "text"
+    },
+    "cve_ids": {
+      "type": "keyword"
+    },
+    "cve_count": {
+      "type": "integer"
+    },
+    "recommendation_ids": {
+      "type": "keyword"
+    },
+    "affected_products": {
+      "properties": {
+        "vendor": {
+          "type": "keyword"
+        },
+        "name": {
+          "type": "keyword"
+        },
+        "versions": {
+          "type": "keyword"
+        }
+      }
+    },
+    "affected_device_count": {
+      "type": "integer"
+    },
+    "affected_device_ids": {
+      "type": "keyword"
+    },
+    "affected_devices": {
+      "type": "keyword"
+    },
+    "internet_facing_device_count": {
+      "type": "integer"
+    },
+    "high_value_device_count": {
+      "type": "integer"
+    },
+    "exploit_available": {
+      "type": "boolean"
+    },
+    "max_severity": {
+      "type": "keyword"
+    },
+    "max_cvss": {
+      "type": "double"
+    },
+    "end_of_support": {
+      "type": "keyword"
+    },
+    "remediation_steps": {
+      "type": "text"
+    },
+    "gpo_name": {
+      "type": "keyword"
+    },
+    "gpo_settings": {
+      "properties": {
+        "scope": {
+          "type": "keyword"
+        },
+        "path": {
+          "type": "keyword"
+        },
+        "policy": {
+          "type": "keyword"
+        },
+        "value": {
+          "type": "keyword"
+        },
+        "registry": {
+          "type": "keyword"
+        },
+        "os_requirements": {
+          "type": "text"
+        },
+        "admx": {
+          "type": "keyword"
+        }
+      }
+    },
+    "scope_guidance": {
+      "type": "text"
+    },
+    "server_notes": {
+      "type": "text"
+    },
+    "dc_notes": {
+      "type": "text"
+    },
+    "compatibility_risks": {
+      "type": "text"
+    },
+    "dependencies": {
+      "type": "text"
+    },
+    "expected_outcome": {
+      "properties": {
+        "summary": {
+          "type": "text"
+        },
+        "finding_reduction": {
+          "type": "integer"
+        },
+        "cve_reduction": {
+          "type": "integer"
+        },
+        "device_reduction": {
+          "type": "integer"
+        },
+        "basis": {
+          "type": "text"
+        }
+      }
+    },
+    "effort": {
+      "type": "keyword"
+    },
+    "operational_impact": {
+      "type": "text"
+    },
+    "owner": {
+      "type": "keyword"
+    },
+    "validation_steps": {
+      "type": "text"
+    },
+    "rollback_steps": {
+      "type": "text"
+    },
+    "references": {
+      "type": "keyword"
+    },
+    "data_gaps": {
+      "type": "text",
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 1024
+        }
+      }
+    },
+    "suggested_catalog_key": {
+      "type": "keyword"
+    },
+    "status": {
+      "type": "keyword"
+    },
+    "first_seen": {
+      "type": "date"
+    },
+    "last_seen": {
+      "type": "date"
+    },
+    "resolved_at": {
+      "type": "date"
+    },
+    "event": {
+      "properties": {
+        "kind": {
+          "type": "keyword"
+        },
+        "module": {
+          "type": "keyword"
+        },
+        "dataset": {
+          "type": "keyword"
+        },
+        "ingested": {
+          "type": "date"
+        }
+      }
+    },
+    "ecs": {
+      "properties": {
+        "version": {
+          "type": "keyword"
+        }
+      }
+    },
+    "soc": {
+      "properties": {
+        "publication_id": {
+          "type": "long"
+        },
+        "txid": {
+          "type": "long"
+        },
+        "entity": {
+          "type": "keyword"
+        },
+        "dataset": {
+          "type": "keyword"
+        }
+      }
+    }
+  }
+}

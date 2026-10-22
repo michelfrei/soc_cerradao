@@ -50,3 +50,29 @@ test('posture template is current state and receives explicit shared mappings wi
   assert.deepEqual(template.composed_of, ['soc-mappings']);
   assert.equal(template.template.settings['index.lifecycle.name'], undefined);
 });
+
+test('software posture keeps end-of-support status and date typed', () => {
+  assert.equal(field('soc.posture.end_of_support_status')?.type, 'keyword');
+  assert.equal(field('soc.posture.end_of_support_date')?.type, 'date');
+});
+
+test('insights template has its own explicit contract with unknown-capable numeric/boolean fields', () => {
+  const template = JSON.parse(readFileSync(new URL('../templates/index-soc-insights.json', import.meta.url), 'utf8'));
+  const insights = JSON.parse(readFileSync(new URL('../mappings/soc-insights-mappings.json', import.meta.url), 'utf8'));
+  const f = (path) => path.split('.').reduce((node, name) => node?.properties?.[name], insights);
+  assert.deepEqual(template.index_patterns, ['soc-insights']);
+  assert.deepEqual(template.composed_of, ['soc-insights-mappings']);
+  assert.equal(template.template.settings['index.lifecycle.name'], undefined);
+  assert.equal(insights.dynamic, false);
+  for (const name of ['@timestamp', 'schema_version', 'analysis_id', 'insight_id', 'source', 'title', 'description', 'category',
+    'priority', 'risk_rationale', 'cve_ids', 'recommendation_ids', 'affected_products', 'affected_device_count', 'remediation_type',
+    'remediation_steps', 'gpo_settings', 'dependencies', 'expected_outcome', 'validation_steps', 'rollback_steps', 'references',
+    'data_gaps', 'status', 'first_seen', 'last_seen']) {
+    assert.ok(insights.properties[name], name);
+  }
+  for (const name of ['insight_id', 'category', 'priority', 'status', 'cve_ids', 'recommendation_ids', 'source.finding_ids']) assert.equal(f(name)?.type, 'keyword', name);
+  for (const name of ['affected_device_count', 'internet_facing_device_count', 'expected_outcome.finding_reduction']) assert.equal(f(name)?.type, 'integer', name);
+  for (const name of ['first_seen', 'last_seen', 'resolved_at', '@timestamp']) assert.equal(f(name)?.type, 'date', name);
+  assert.equal(f('exploit_available')?.type, 'boolean');
+  assert.equal(f('gpo_settings.policy')?.type, 'keyword');
+});

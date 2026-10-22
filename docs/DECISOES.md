@@ -117,3 +117,13 @@ minuto usam IDs por fonte/minuto. Gauges usam última amostra, nunca soma de
 snapshots. Tamanho das relações PostgreSQL é medido sem varrer eventos; capacidade
 do ES vem de `_nodes/_local/stats` autenticado com o usuário monitor do Logstash.
 Os dados não representam CPU/RAM das VMs nem dos endpoints monitorados.
+
+## D12 — Insights de remediação
+
+Cada achado TVM ativo pertence a um único bloco de ação; `insight_id` é derivado
+só da categoria e da chave da ação, nunca de dispositivos, CVEs ou datas. O cálculo
+lê o PostgreSQL em `REPEATABLE READ` e grava estado e publicação na mesma transação;
+sem snapshots concluídos não recalcula. Ausência de achados vira
+`no_longer_reported`, nunca "corrigido". GPO só é proposta para scid vinculado
+explicitamente no catálogo validado; o restante vai para investigação. Valores
+desconhecidos ficam ausentes, não zero. Detalhes em [INSIGHTS-REMEDIACAO.md](INSIGHTS-REMEDIACAO.md).

@@ -26,16 +26,23 @@ PostgreSQL → Logstash → Elasticsearch / Kibana (Elastic Security).
   de classificação. [Contrato de identidades](docs/IDENTIDADES.md).
 - Postura: snapshots TVM de vulnerabilidades e avaliações de configuração a cada
   seis horas; estado atual separado dos eventos, sem apagar resultados por falha.
-- Kibana: espaço `soc`, sete dashboards, oito regras v2 em observação e perfis
+- Kibana: espaço `soc`, nove dashboards, oito regras v2 em observação e perfis
   observer/analyst/admin. [Guia das telas](docs/DASHBOARDS.md).
+- Remediação: a postura TVM é agrupada pela ação que a resolve (atualização do
+  Windows/aplicativo, GPO validada, substituição de software sem suporte ou
+  investigação) e publicada em `soc-insights`, com prioridade, evidências,
+  validação e reversão. [Insights de remediação](docs/INSIGHTS-REMEDIACAO.md).
 - Capacidade: snapshots PostgreSQL/Elasticsearch; relatório manual da VM em
   `bash scripts/capacity-report.sh docker` ou `postgres`.
 - Ainda não incluídos: backup automatizado, Grafana, CI, exportação detalhada da
   saúde do antivírus pela API MDE e a frente de IA.
 
-**Próxima atualização (processos, rede e postura):** siga
-[DEPLOY-PROCESSOS-EXPOSICAO.md](docs/DEPLOY-PROCESSOS-EXPOSICAO.md), com migração 004
-no PostgreSQL antes de ativar o coletor 0.3.0 e os novos dashboards.
+**Próxima atualização (insights de remediação):** siga
+[DEPLOY-INSIGHTS.md](docs/DEPLOY-INSIGHTS.md), com migração 005 no PostgreSQL antes
+do coletor 0.4.0.
+
+**Evolução anterior (processos, rede e postura):**
+[DEPLOY-PROCESSOS-EXPOSICAO.md](docs/DEPLOY-PROCESSOS-EXPOSICAO.md), migração 004 e coletor 0.3.0.
 
 **Evolução anterior (identidades/cobertura):** [DEPLOY-EVOLUCAO.md](docs/DEPLOY-EVOLUCAO.md).
 Aplica primeiro a migração 003 no PostgreSQL 18, depois atualiza a VM-Docker.

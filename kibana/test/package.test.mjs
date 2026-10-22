@@ -39,8 +39,8 @@ test('all saved-object IDs and references resolve, including dashboard panel ref
   }
 });
 
-test('eight dashboards have valid nonoverlapping panel layouts', () => {
-  assert.equal(dashboards.length, 8);
+test('nine dashboards have valid nonoverlapping panel layouts', () => {
+  assert.equal(dashboards.length, 9);
   for (const d of dashboards) {
     const panels = JSON.parse(d.attributes.panelsJSON);
     for (const [i, p] of panels.entries()) {
@@ -240,4 +240,20 @@ test('acessos aos servidores: controles, pontos de atenção em ordem e cores fi
   assert.deepEqual(timeline.map((y) => y.color), ['#54B399', '#E7664C']);
   // IP público exclui todas as faixas privadas.
   assert.match(get('soc-asv-pa-public').attributes.state.query.query, /10\.0\.0\.0\/8.*172\.16\.0\.0\/12.*192\.168\.0\.0\/16/);
+});
+
+test('remediation dashboard reads soc-insights without time cut and never sums devices across insights', () => {
+  assert.equal(get('soc-insights').attributes.timeFieldName, undefined);
+  assert.ok(get('soc-dashboard-remediacao'));
+  const remediation = lenses.filter((o) => o.id.startsWith('soc-rem-'));
+  assert.ok(remediation.length >= 7);
+  for (const o of remediation) {
+    assert.equal(o.references[0].id, 'soc-insights', o.id);
+    for (const c of columns(o)) {
+      if (['affected_device_count', 'cve_count', 'priority_score'].includes(c.sourceField)) assert.equal(c.operationType, 'max', `${o.id}: ${c.sourceField}`);
+      assert.notEqual(c.operationType, 'sum', o.id);
+    }
+  }
+  const nav = JSON.parse(get('soc-dashboard-overview').attributes.panelsJSON)[0].embeddableConfig.savedVis.params.markdown;
+  assert.match(nav, /soc-dashboard-remediacao/);
 });

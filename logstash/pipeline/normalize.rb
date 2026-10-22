@@ -262,17 +262,34 @@ def filter(event)
     return [event]
   end
 
+  if entity == 'insight'
+    # Documento já estruturado pelo coletor (insights/engine.ts); só valida o contrato
+    # mínimo e o leva à raiz. Versão externa evita regressão por execução antiga.
+    generated = present(data['@timestamp'])
+    return [] unless dataset == 'remediation' && present(data['insight_id']) && generated && present(data['schema_version'])
+    data.each { |key, value| event.set("[#{key}]", value) unless key == '@timestamp' || value.nil? }
+    event.remove('defender')
+    event.set('[event][kind]', 'state')
+    event.set('[event][module]', 'soc')
+    event.set('[event][dataset]', 'soc.remediation_insight')
+    event.set('[event][ingested]', LogStash::Timestamp.now)
+    event.set('[@metadata][doc_id]', data['insight_id'])
+    event.set('[@metadata][index]', 'soc-insights')
+    event.set('[@metadata][version]', (Time.iso8601(generated).to_r * 1000).to_i.to_s)
+    return [event]
+  end
+
   if entity == 'posture'
     # O coletor publica somente snapshots completos com IDs estáveis. Não deixar
     # snapshot malformado escrever sem versão e sobrescrever estado mais recente.
-    return [] unless %w[devicetvmsoftwarevulnerabilities devicetvmsecureconfigurationassessment].include?(dataset)
+    return [] unless %w[devicetvmsoftwarevulnerabilities devicetvmsecureconfigurationassessment devicetvmsoftwareinventory].include?(dataset)
     snapshot = present(data['SOCSnapshotAt'])
     active = boolean(data['SOCActive'])
     return [] unless snapshot && !active.nil? && present(data['DeviceId'])
     snapshot_time = Time.iso8601(snapshot)
-    kind = dataset == 'devicetvmsoftwarevulnerabilities' ? 'vulnerability' : 'configuration'
+    kind = { 'devicetvmsoftwarevulnerabilities' => 'vulnerability', 'devicetvmsoftwareinventory' => 'software' }.fetch(dataset, 'configuration')
     event.set('[event][kind]', 'state')
-    event.set('[event][category]', [kind == 'vulnerability' ? 'vulnerability' : 'configuration'])
+    event.set('[event][category]', [kind == 'vulnerability' ? 'vulnerability' : kind == 'software' ? 'package' : 'configuration'])
     event.set('[event][type]', ['info'])
     event.set('[event][module]', 'defender')
     event.set('[event][dataset]', "defender.#{dataset}")
@@ -296,6 +313,18 @@ def filter(event)
       event.set('[vulnerability][severity]', severity) if severity
       exploit = boolean(data['IsExploitAvailable'])
       event.set('[soc][posture][exploit_available]', exploit) unless exploit.nil?
+    elsif kind == 'software'
+      copy_fields(event, data, {
+        'SoftwareName' => '[package][name]', 'SoftwareVersion' => '[package][version]',
+        'SoftwareVendor' => '[soc][posture][software_vendor]',
+        'EndOfSupportStatus' => '[soc][posture][end_of_support_status]'
+      })
+      eos_date = present(data['EndOfSupportDate'])
+      begin
+        event.set('[soc][posture][end_of_support_date]', Time.iso8601(eos_date).utc.iso8601) if eos_date
+      rescue ArgumentError
+        # Data inválida fica somente no payload bruto.
+      end
     else
       copy_fields(event, data, {
         'ConfigurationId' => '[soc][posture][configuration_id]',
@@ -655,5 +684,40 @@ test 'hora local de Brasília, fora do horário e conta genérica' do
   expect('nomes genéricos sem considerar caixa ou sufixo numérico') do |events|
     events[0].get('[soc][identity][generic]') == true && events[1].get('[soc][identity][generic]') == false &&
       events[2].get('[soc][identity][generic]') == true
+  end
+end
+
+test 'insight de remediação vai à raiz com versão externa e ID estável' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    [ { 'soc' => { 'entity' => 'insight', 'dataset' => 'remediation' }, 'defender' => {
+        '@timestamp' => '2026-10-22T12:00:00.000Z', 'schema_version' => '1.0', 'insight_id' => 'ins-abc',
+        'title' => 'Atualizar app', 'category' => 'application_update', 'priority' => 'P1',
+        'source' => { 'name' => 'microsoft-defender-vulnerability-management', 'finding_ids' => ['p1'] },
+        'internet_facing_device_count' => nil, 'affected_device_count' => 2 } },
+      { 'soc' => { 'entity' => 'insight', 'dataset' => 'remediation' }, 'defender' => { 'title' => 'sem id' } } ]
+  end
+  expect('documento estruturado, sem payload bruto e inválido descartado') do |events|
+    e = events.first
+    events.length == 1 && e.get('[@metadata][index]') == 'soc-insights' && e.get('[@metadata][doc_id]') == 'ins-abc' &&
+      e.get('[@metadata][version]') == '1792670400000' && e.get('[category]') == 'application_update' &&
+      e.get('[source][finding_ids]') == ['p1'] && e.get('[affected_device_count]') == 2 &&
+      e.get('[internet_facing_device_count]').nil? && e.get('defender').nil? && e.get('[event][dataset]') == 'soc.remediation_insight'
+  end
+end
+
+test 'postura de software preserva fim de suporte' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    { 'soc' => { 'entity' => 'posture', 'dataset' => 'devicetvmsoftwareinventory' }, 'defender' => {
+      'DeviceName' => 'srv01', 'DeviceId' => 'd1', 'SoftwareVendor' => 'oracle', 'SoftwareName' => 'jre', 'SoftwareVersion' => '7',
+      'EndOfSupportStatus' => 'EOS Software', 'EndOfSupportDate' => '2022-07-19T00:00:00Z',
+      'SOCActive' => true, 'SOCState' => 'observed', 'SOCSnapshotAt' => '2026-10-21T12:00:00Z' } }
+  end
+  expect('tipo software, pacote e data de fim de suporte') do |events|
+    e = events.first
+    e.get('[soc][posture][kind]') == 'software' && e.get('[event][category]') == ['package'] &&
+      e.get('[package][name]') == 'jre' && e.get('[soc][posture][end_of_support_status]') == 'EOS Software' &&
+      e.get('[soc][posture][end_of_support_date]') == '2022-07-19T00:00:00Z' && e.get('[@metadata][index]') == 'soc-posture'
   end
 end

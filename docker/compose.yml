@@ -184,7 +184,7 @@ services:
   collector:
     build:
       context: ../collector
-    image: soc/collector:${COLLECTOR_VERSION:-0.3.0}
+    image: soc/collector:${COLLECTOR_VERSION:-0.4.0}
     environment:
       GRAPH_TENANT_ID: ${GRAPH_TENANT_ID:?defina GRAPH_TENANT_ID no .env}
       GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID:?defina GRAPH_CLIENT_ID no .env}

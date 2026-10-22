@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
+import { EMPTY_CATALOG, parseCatalog, type RemediationCatalog } from './insights/catalog.js';
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -67,10 +68,19 @@ const InventorySource = BaseSource.extend({
 
 const SnapshotSource = BaseSource.extend({
   type: z.literal('snapshot'),
-  table: z.enum(['DeviceTvmSoftwareVulnerabilities', 'DeviceTvmSecureConfigurationAssessment']),
+  table: z.enum(['DeviceTvmSoftwareVulnerabilities', 'DeviceTvmSecureConfigurationAssessment', 'DeviceTvmSoftwareInventory']),
   queryFile: z.string().regex(/^[a-z0-9_.-]+\.kql$/),
   intervalSeconds: z.number().int().min(60).default(21600),
   maxRows: z.number().int().min(100).max(10_000).default(10_000),
+});
+
+const InsightsSource = BaseSource.extend({
+  type: z.literal('insights'),
+  intervalSeconds: z.number().int().min(60).default(21600),
+  vulnerabilitySource: z.string().default('snapshot.devicetvmsoftwarevulnerabilities'),
+  configurationSource: z.string().default('snapshot.devicetvmsecureconfigurationassessment'),
+  // null: sem avaliação de fim de suporte.
+  softwareInventorySource: z.string().nullable().default('snapshot.devicetvmsoftwareinventory'),
 });
 
 const ExpectedAsset = z.object({
@@ -98,14 +108,15 @@ export function parseAssets(raw: unknown): ExpectedAssetConfig[] {
 }
 
 const SourcesFile = z.object({
-  sources: z.array(z.discriminatedUnion('type', [ObjectSource, HuntingSource, InventorySource, SnapshotSource])),
+  sources: z.array(z.discriminatedUnion('type', [ObjectSource, HuntingSource, InventorySource, SnapshotSource, InsightsSource])),
 });
 
 export type ObjectSourceConfig = z.infer<typeof ObjectSource>;
 export type HuntingSourceConfig = z.infer<typeof HuntingSource> & { query: string };
 export type InventorySourceConfig = z.infer<typeof InventorySource> & { query: string };
 export type SnapshotSourceConfig = z.infer<typeof SnapshotSource> & { query: string };
-export type SourceConfig = ObjectSourceConfig | HuntingSourceConfig | InventorySourceConfig | SnapshotSourceConfig;
+export type InsightsSourceConfig = z.infer<typeof InsightsSource>;
+export type SourceConfig = ObjectSourceConfig | HuntingSourceConfig | InventorySourceConfig | SnapshotSourceConfig | InsightsSourceConfig;
 
 export type GraphCredential =
   | { kind: 'secret'; clientSecret: string }
@@ -134,6 +145,7 @@ export interface Config {
   };
   sources: SourceConfig[];
   assets: ExpectedAssetConfig[];
+  catalog: RemediationCatalog;
   logLevel: string;
   healthPort: number;
 }
@@ -175,6 +187,16 @@ export function parseSources(raw: unknown, readQuery: (file: string) => string):
   const parsed = SourcesFile.parse(raw);
   const names = new Set<string>();
   const snapshotTables = new Set<string>();
+  // Insights dependem de snapshots declarados da tabela correspondente.
+  const snapshotOf = new Map(parsed.sources.filter((s) => s.type === 'snapshot').map((s) => [s.name, s.table]));
+  for (const s of parsed.sources) {
+    if (s.type !== 'insights') continue;
+    const refs: Array<[string | null, string]> = [[s.vulnerabilitySource, 'DeviceTvmSoftwareVulnerabilities'],
+      [s.configurationSource, 'DeviceTvmSecureConfigurationAssessment'], [s.softwareInventorySource, 'DeviceTvmSoftwareInventory']];
+    for (const [ref, table] of refs) {
+      if (ref !== null && snapshotOf.get(ref) !== table) throw new Error(`${s.name}: ${ref} não é snapshot declarado de ${table}`);
+    }
+  }
   return parsed.sources.map((s) => {
     if (names.has(s.name)) throw new Error(`fonte duplicada: ${s.name}`);
     names.add(s.name);
@@ -213,6 +235,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
 
+  let catalog = EMPTY_CATALOG;
+  try {
+    catalog = parseCatalog(JSON.parse(readFileSync(join(dirname(e.SOURCES_FILE), 'remediation-catalog.json'), 'utf8')));
+  } catch (err) {
+    // Ausente: insights sem catálogo (configurações vão para investigação). Inválido: falha.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+
   return {
     graph: {
       tenantId: e.GRAPH_TENANT_ID,
@@ -236,6 +266,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     sources,
     assets,
+    catalog,
     logLevel: e.LOG_LEVEL,
     healthPort: e.HEALTH_PORT,
   };

@@ -1,0 +1,819 @@
+{
+  "owners": {},
+  "configurations": [
+    {
+      "key": "smbv1-disable",
+      "title": "Desativar SMBv1 (servidor e cliente)",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "smbv1",
+        "smb v1",
+        "smb1"
+      ],
+      "gpo_name": "SOC-SRV-Desativar-SMBv1",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Preferences\\Windows Settings\\Registry",
+          "policy": "Registry item (GPP): SMB1",
+          "value": "Action=Update; REG_DWORD 0",
+          "registry": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters\\SMB1 = 0",
+          "os_requirements": "Exige reinicialização. SMBv1 não vem instalado por padrão no Windows Server 2019 e posteriores.",
+          "admx": null
+        },
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Preferences\\Windows Settings\\Registry",
+          "policy": "Registry item (GPP): mrxsmb10 Start",
+          "value": "Action=Update; REG_DWORD 4",
+          "registry": "HKLM\\SYSTEM\\CurrentControlSet\\services\\mrxsmb10\\Start = 4",
+          "os_requirements": "Exige reinicialização. Não aplicar a configuração extra pre-Win8.1/2012R2 em 2012 R2 ou posterior.",
+          "admx": null
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": null,
+      "dc_notes": "A Microsoft orienta aplicar também em DCs; confirmar antes que nenhum sistema legado acessa o SYSVOL por SMBv1.",
+      "compatibility_risks": [
+        "Clientes/dispositivos que só suportam SMBv1, inclusive acessos ao SYSVOL."
+      ],
+      "remediation_steps": [
+        "Auditar o uso de SMBv1 antes: Set-SmbServerConfiguration -AuditSmb1Access $true e acompanhar o evento 3000 em Microsoft-Windows-SMBServer/Audit.",
+        "Criar a GPO com os itens de registro (alternativa documentada: SecGuide.admx do Security Compliance Toolkit, \"Configure SMB v1 server\" = Disabled e \"Configure SMB v1 client driver\" = Enabled com \"Disable driver\"; nunca marcar Disabled nesta última).",
+        "Aplicar no piloto, reiniciar em janela e expandir."
+      ],
+      "validation_steps": [
+        "Get-SmbServerConfiguration | Select EnableSMB1Protocol (esperado False).",
+        "sc.exe qc lanmanworkstation (sem dependência de MRxSmb10).",
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force.",
+        "Se um sistema legado parar, restaurar SMB1=1 / Start=2 por GPP (Action=Update) e reiniciar."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/windows-server/storage/file-server/troubleshoot/detect-enable-and-disable-smbv1-v2-v3",
+        "https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-mssecurityguide"
+      ],
+      "effort": "medio",
+      "operational_impact": "Exige reinicialização; sistemas legados (NAS, Linux antigo, Windows antigo) que só falam SMBv1 perdem acesso."
+    },
+    {
+      "key": "smb-signing",
+      "title": "Exigir assinatura SMB (servidor e cliente)",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "smb signing",
+        "digitally sign communications",
+        "assinatura smb"
+      ],
+      "gpo_name": "SOC-SRV-Assinatura-SMB",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Windows Settings\\Security Settings\\Local Policies\\Security Options",
+          "policy": "Microsoft network server: Digitally sign communications (always)",
+          "value": "Enabled",
+          "registry": null,
+          "os_requirements": "Sem reinicialização.",
+          "admx": null
+        },
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Windows Settings\\Security Settings\\Local Policies\\Security Options",
+          "policy": "Microsoft network client: Digitally sign communications (always)",
+          "value": "Enabled",
+          "registry": null,
+          "os_requirements": "Sem reinicialização. No Windows Server 2025 a assinatura de saída já é exigida por padrão.",
+          "admx": null
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": "Em servidores membros o padrão do lado servidor é Disabled.",
+      "dc_notes": "Nos DCs o lado servidor já é Enabled pela Default Domain Controllers Policy; o lado cliente é Disabled por padrão.",
+      "compatibility_risks": [
+        "SMB de terceiros sem assinatura; acesso guest; custo de CPU em redes de 10 Gb."
+      ],
+      "remediation_steps": [
+        "Criar a GPO com as duas políticas; não usar as variantes \"(if client agrees)\"/\"(if server agrees)\", que só afetam SMBv1.",
+        "Aplicar no piloto e medir CPU em servidores de arquivos com alto tráfego."
+      ],
+      "validation_steps": [
+        "Get-SmbServerConfiguration | FL RequireSecuritySignature (True).",
+        "Get-SmbClientConfiguration | FL RequireSecuritySignature (True).",
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/windows-server/storage/file-server/smb-signing",
+        "https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/microsoft-network-server-digitally-sign-communications-always",
+        "https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/microsoft-network-client-digitally-sign-communications-always"
+      ],
+      "effort": "baixo",
+      "operational_impact": "Custo de CPU em transferências SMB; SMB de terceiros sem assinatura falha (STATUS_INVALID_SIGNATURE) e o acesso guest é bloqueado."
+    },
+    {
+      "key": "lm-auth-level",
+      "title": "Nível de autenticação LAN Manager: somente NTLMv2",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "lan manager authentication level",
+        "ntlmv2",
+        "lm & ntlm"
+      ],
+      "gpo_name": "SOC-SRV-NTLMv2",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Windows Settings\\Security Settings\\Local Policies\\Security Options",
+          "policy": "Network security: LAN Manager authentication level",
+          "value": "Send NTLMv2 response only. Refuse LM & NTLM",
+          "registry": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\LmCompatibilityLevel = 5",
+          "os_requirements": "Sem reinicialização.",
+          "admx": null
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": null,
+      "dc_notes": "Nos DCs, o nível 5 faz o DC recusar LM e NTLM: aplicar somente depois de validar membros e aplicações.",
+      "compatibility_risks": [
+        "A Microsoft adverte impacto em dispositivos, serviços e aplicações; a fonte recomenda explicitamente o nível 3 quando todos suportam NTLMv2."
+      ],
+      "remediation_steps": [
+        "Inventariar clientes/aplicações que ainda usam LM/NTLMv1 antes de aplicar.",
+        "Aplicar no piloto; nos DCs, aplicar por último e com janela de observação."
+      ],
+      "validation_steps": [
+        "Ler LmCompatibilityLevel (esperado 5).",
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force.",
+        "Se necessário, voltar ao nível 3 (Send NTLMv2 response only)."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/network-security-lan-manager-authentication-level"
+      ],
+      "effort": "medio",
+      "operational_impact": "Clientes sem NTLMv2 deixam de autenticar; nos DCs o efeito alcança todo o domínio."
+    },
+    {
+      "key": "no-lm-hash",
+      "title": "Não armazenar hash LAN Manager",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "lan manager hash",
+        "lm hash"
+      ],
+      "gpo_name": "SOC-SRV-Sem-Hash-LM",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Windows Settings\\Security Settings\\Local Policies\\Security Options",
+          "policy": "Network security: Do not store LAN Manager hash value on next password change",
+          "value": "Enabled",
+          "registry": null,
+          "os_requirements": "Sem reinicialização; o padrão já é Enabled.",
+          "admx": null
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": null,
+      "dc_notes": "Nos DCs, a troca de senha dos usuários é que elimina os hashes existentes.",
+      "compatibility_risks": [
+        "Algumas aplicações não Microsoft podem não conectar."
+      ],
+      "remediation_steps": [
+        "Garantir a política Enabled (pode ter sido revertida por GPO antiga).",
+        "Exigir troca de senha para eliminar hashes LM já armazenados."
+      ],
+      "validation_steps": [
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/network-security-do-not-store-lan-manager-hash-value-on-next-password-change"
+      ],
+      "effort": "baixo",
+      "operational_impact": "Baixo; aplicações não Microsoft antigas podem não conectar."
+    },
+    {
+      "key": "llmnr-off",
+      "title": "Desativar LLMNR",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "multicast name resolution",
+        "llmnr"
+      ],
+      "gpo_name": "SOC-SRV-Desativar-LLMNR",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Administrative Templates\\Network\\DNS Client",
+          "policy": "Turn off multicast name resolution",
+          "value": "Enabled",
+          "registry": "HKLM\\Software\\Policies\\Microsoft\\Windows NT\\DNSClient\\EnableMulticast (valor numérico não informado na fonte)",
+          "os_requirements": "A tabela oficial de SO lista apenas clientes; confirmar \"Supported on\" no editor de GPO para Windows Server.",
+          "admx": "DnsClient.admx"
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": null,
+      "dc_notes": null,
+      "compatibility_risks": [],
+      "remediation_steps": [
+        "Confirmar que a resolução de nomes depende apenas de DNS.",
+        "Criar a GPO e aplicar no piloto."
+      ],
+      "validation_steps": [
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-dnsclient"
+      ],
+      "effort": "baixo",
+      "operational_impact": "A resolução de nomes sem DNS (LLMNR) deixa de funcionar."
+    },
+    {
+      "key": "wdigest-off",
+      "title": "WDigest sem credenciais em memória",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "wdigest"
+      ],
+      "gpo_name": "SOC-SRV-WDigest",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Preferences\\Windows Settings\\Registry",
+          "policy": "Registry item (GPP): UseLogonCredential",
+          "value": "Action=Update; REG_DWORD 0",
+          "registry": "HKLM\\System\\CurrentControlSet\\Control\\SecurityProviders\\WDigest\\UseLogonCredential = 0",
+          "os_requirements": "No Windows Server 2012 R2 e posteriores o padrão já é 0 quando o valor não existe; fixar evita reativação.",
+          "admx": null
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": null,
+      "dc_notes": null,
+      "compatibility_risks": [],
+      "remediation_steps": [
+        "Criar a GPO com o item de registro (alternativa: SecGuide.admx, \"WDigest Authentication\" = Disabled).",
+        "Investigar por que o valor estava 1: alteração manual ou por ferramenta pode indicar abuso."
+      ],
+      "validation_steps": [
+        "Ler UseLogonCredential (esperado 0).",
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-mssecurityguide",
+        "https://support.microsoft.com/en-us/topic/microsoft-security-advisory-update-to-improve-credentials-protection-and-management-may-13-2014-93434251-04ac-b7f3-52aa-9f951c14b649"
+      ],
+      "effort": "baixo",
+      "operational_impact": "Baixo; credenciais podem ser solicitadas com mais frequência onde o WDigest era usado."
+    },
+    {
+      "key": "lsa-ppl",
+      "title": "Executar o LSASS como processo protegido (LSA protection)",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "lsa protection",
+        "runasppl",
+        "protected process"
+      ],
+      "gpo_name": "SOC-SRV-LSA-Protection",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Preferences\\Windows Settings\\Registry",
+          "policy": "Registry item (GPP): RunAsPPL",
+          "value": "Action=Update; REG_DWORD 1 (com variável UEFI)",
+          "registry": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\RunAsPPL = 1",
+          "os_requirements": "Windows Server 2012 R2+; exige reinicialização. A política ADMX \"Configures LSASS to run as a protected process\" vale a partir do Windows 11 22H2.",
+          "admx": null
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": null,
+      "dc_notes": "Testar primeiro em um DC; com UEFI lock a reversão exige acesso local.",
+      "compatibility_risks": [
+        "Plug-ins e drivers de LSA sem assinatura Microsoft."
+      ],
+      "remediation_steps": [
+        "Auditar antes: AuditLevel=8 em HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\LSASS.exe e revisar os eventos 3065/3066 no log CodeIntegrity/Operational.",
+        "Corrigir/remover plug-ins de LSA sem assinatura (smart card, filtros de senha, plug-ins criptográficos).",
+        "Aplicar no piloto e reiniciar."
+      ],
+      "validation_steps": [
+        "Evento WinInit 12 no log System: \"LSASS.exe was started as a protected process with level: 4\".",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "O valor 1 grava uma variável UEFI: a reversão exige a ferramenta LSA Protected Process Opt-out (LsaPplConfig.efi) com acesso local.",
+        "Por isso, só expandir após piloto bem-sucedido; sem Secure Boot/UEFI, remover o valor por GPP e reiniciar."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/windows-server/security/credentials-protection-and-management/configuring-additional-lsa-protection"
+      ],
+      "effort": "medio",
+      "operational_impact": "Exige reinicialização; drivers/plug-ins de LSA não assinados deixam de carregar; depuração do LSASS deixa de ser possível."
+    },
+    {
+      "key": "rdp-nla",
+      "title": "RDP com Network Level Authentication",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "network level authentication",
+        "nla"
+      ],
+      "gpo_name": "SOC-SRV-RDP-NLA",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Administrative Templates\\Windows Components\\Remote Desktop Services\\Remote Desktop Session Host\\Security",
+          "policy": "Require user authentication for remote connections by using Network Level Authentication",
+          "value": "Enabled",
+          "registry": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\Terminal Services\\UserAuthentication (valor numérico não informado na fonte)",
+          "os_requirements": null,
+          "admx": "TerminalServer.admx"
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": null,
+      "dc_notes": null,
+      "compatibility_risks": [
+        "Clientes sem suporte a NLA."
+      ],
+      "remediation_steps": [
+        "Confirmar que os clientes RDP e jump servers suportam NLA.",
+        "Criar a GPO e aplicar no piloto."
+      ],
+      "validation_steps": [
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-terminalserver"
+      ],
+      "effort": "baixo",
+      "operational_impact": "Clientes RDP sem NLA deixam de conectar."
+    },
+    {
+      "key": "autorun-off",
+      "title": "Desativar AutoPlay e AutoRun",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "autoplay",
+        "autorun"
+      ],
+      "gpo_name": "SOC-SRV-AutoPlay",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Administrative Templates\\Windows Components\\AutoPlay Policies",
+          "policy": "Turn off Autoplay",
+          "value": "Enabled: All drives",
+          "registry": null,
+          "os_requirements": "Se Computador e Usuário conflitarem, prevalece Computador.",
+          "admx": "AutoPlay.admx"
+        },
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Administrative Templates\\Windows Components\\AutoPlay Policies",
+          "policy": "Set the default behavior for AutoRun",
+          "value": "Enabled: Do not execute any autorun commands",
+          "registry": null,
+          "os_requirements": null,
+          "admx": "AutoPlay.admx"
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": null,
+      "dc_notes": null,
+      "compatibility_risks": [],
+      "remediation_steps": [
+        "Criar a GPO com as duas políticas e aplicar no piloto."
+      ],
+      "validation_steps": [
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-autoplay"
+      ],
+      "effort": "baixo",
+      "operational_impact": "Baixo em servidores."
+    },
+    {
+      "key": "mdav-pua",
+      "title": "Microsoft Defender Antivirus: bloquear aplicativos potencialmente indesejados",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "potentially unwanted",
+        "pua"
+      ],
+      "gpo_name": "SOC-SRV-MDAV-PUA",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Administrative Templates\\Windows Components\\Microsoft Defender Antivirus",
+          "policy": "Configure detection for potentially unwanted applications",
+          "value": "Enabled: Block (Audit Mode no piloto)",
+          "registry": null,
+          "os_requirements": "Windows Server 2016+; Central Store com Administrative Templates do Windows 10 1809 ou posterior.",
+          "admx": "WindowsDefender.admx (Administrative Templates do Windows)"
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": "Com outro antivírus ativo, o Defender pode estar em modo passivo e a política não terá efeito.",
+      "dc_notes": null,
+      "compatibility_risks": [
+        "Ferramentas administrativas classificadas como PUA."
+      ],
+      "remediation_steps": [
+        "Aplicar no piloto em Audit Mode, revisar detecções e então mudar para Block."
+      ],
+      "validation_steps": [
+        "Get-MpPreference | Format-Table PUAProtection (1 = bloqueio, 2 = auditoria).",
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/defender-endpoint/detect-block-potentially-unwanted-apps-microsoft-defender-antivirus"
+      ],
+      "effort": "baixo",
+      "operational_impact": "Baixo; ferramentas legítimas classificadas como PUA podem ser bloqueadas."
+    },
+    {
+      "key": "mdav-cloud",
+      "title": "Microsoft Defender Antivirus: proteção na nuvem (MAPS)",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "cloud-delivered",
+        "cloud protection",
+        "maps"
+      ],
+      "gpo_name": "SOC-SRV-MDAV-Nuvem",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Administrative Templates\\Windows Components\\Microsoft Defender Antivirus\\MAPS",
+          "policy": "Join Microsoft MAPS",
+          "value": "Enabled: Advanced MAPS",
+          "registry": null,
+          "os_requirements": "Windows Server 2016+",
+          "admx": "WindowsDefender.admx (Administrative Templates do Windows)"
+        },
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Administrative Templates\\Windows Components\\Microsoft Defender Antivirus\\MAPS",
+          "policy": "Send file samples when further analysis is required",
+          "value": "Enabled: Send safe samples",
+          "registry": null,
+          "os_requirements": "Windows Server 2016+",
+          "admx": "WindowsDefender.admx (Administrative Templates do Windows)"
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": null,
+      "dc_notes": null,
+      "compatibility_risks": [
+        "\"Never send\" reduz a proteção e desativa o Block at First Sight."
+      ],
+      "remediation_steps": [
+        "Liberar a conectividade do Defender com os serviços de nuvem (proxy/firewall).",
+        "Criar a GPO e aplicar no piloto."
+      ],
+      "validation_steps": [
+        "Get-MpPreference | Select-Object MAPSReporting, SubmitSamplesConsent (MAPSReporting = 2).",
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/defender-endpoint/cloud-protection-configure"
+      ],
+      "effort": "baixo",
+      "operational_impact": "Baixo; amostras seguras são enviadas ao serviço Microsoft."
+    },
+    {
+      "key": "mdav-realtime",
+      "title": "Microsoft Defender Antivirus: proteção em tempo real e monitoramento de comportamento",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [
+        "scid-91"
+      ],
+      "name_hints": [
+        "real-time protection",
+        "behavior monitoring",
+        "realtime"
+      ],
+      "gpo_name": "SOC-SRV-MDAV-TempoReal",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Administrative Templates\\Windows Components\\Microsoft Defender Antivirus\\Real-time Protection",
+          "policy": "Turn off real-time protection",
+          "value": "Disabled",
+          "registry": null,
+          "os_requirements": "Windows Server 2016+",
+          "admx": "WindowsDefender.admx (Administrative Templates do Windows)"
+        },
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Administrative Templates\\Windows Components\\Microsoft Defender Antivirus\\Real-time Protection",
+          "policy": "Turn on behavior monitoring",
+          "value": "Enabled",
+          "registry": null,
+          "os_requirements": "Windows Server 2016+",
+          "admx": "WindowsDefender.admx (Administrative Templates do Windows)"
+        },
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Administrative Templates\\Windows Components\\Microsoft Defender Antivirus\\Real-time Protection",
+          "policy": "Monitor file and program activity on your computer",
+          "value": "Enabled",
+          "registry": null,
+          "os_requirements": "Windows Server 2016+",
+          "admx": "WindowsDefender.admx (Administrative Templates do Windows)"
+        },
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Administrative Templates\\Windows Components\\Microsoft Defender Antivirus\\Real-time Protection",
+          "policy": "Configure monitoring for incoming and outgoing file and program activity",
+          "value": "Enabled: bi-directional",
+          "registry": null,
+          "os_requirements": "Windows Server 2016+",
+          "admx": "WindowsDefender.admx (Administrative Templates do Windows)"
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": "Com Tamper Protection ativo, alterações de GPO em configurações protegidas são ignoradas.",
+      "dc_notes": null,
+      "compatibility_risks": [],
+      "remediation_steps": [
+        "Verificar se algum antivírus de terceiros justifica o modo passivo antes de forçar a política.",
+        "Criar a GPO e aplicar no piloto."
+      ],
+      "validation_steps": [
+        "Get-MpPreference | Select-Object DisableRealtimeMonitoring, DisableBehaviorMonitoring, RealTimeScanDirection (False, False, 0).",
+        "Get-MpComputerStatus | Format-Table BehaviorMonitorEnabled.",
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/defender-endpoint/configure-real-time-protection-microsoft-defender-antivirus",
+        "https://learn.microsoft.com/en-us/defender-endpoint/behavior-monitor",
+        "https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-antivirus-windows-server-configure"
+      ],
+      "effort": "baixo",
+      "operational_impact": "Baixo; observar no piloto o consumo de CPU do antivírus em servidores com muita E/S."
+    },
+    {
+      "key": "firewall-on",
+      "title": "Firewall do Windows ligado em todos os perfis",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "firewall"
+      ],
+      "gpo_name": "SOC-SRV-Firewall",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Windows Settings\\Security Settings\\Windows Defender Firewall with Advanced Security",
+          "policy": "Windows Firewall Properties: Firewall state (perfis Domain, Private e Public)",
+          "value": "On (recommended); Inbound: Block (default); Outbound: Allow (default)",
+          "registry": null,
+          "os_requirements": "Windows Server 2016 a 2025",
+          "admx": null
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": null,
+      "dc_notes": null,
+      "compatibility_risks": [
+        "Serviços sem regra de entrada; conexões IPsec são reavaliadas a cada aplicação da política."
+      ],
+      "remediation_steps": [
+        "Inventariar as portas de entrada necessárias por função (AD, SQL, IIS, backup, monitoramento) e criar as regras de permissão na mesma GPO antes de ligar.",
+        "Aplicar no piloto."
+      ],
+      "validation_steps": [
+        "Get-NetFirewallProfile | Select Name, Enabled (True nos três perfis).",
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force.",
+        "Para desligar temporariamente, desativar os perfis mantendo o serviço do firewall em execução."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/windows-firewall/tools",
+        "https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/windows-firewall/configure-with-command-line"
+      ],
+      "effort": "medio",
+      "operational_impact": "Serviços sem regra de entrada ficam inacessíveis; a reaplicação da política relê as regras."
+    },
+    {
+      "key": "anon-enum",
+      "title": "Bloquear enumeração anônima e acesso nulo",
+      "category": "gpo_configuration",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "anonymous enumeration",
+        "anonymous access",
+        "null session"
+      ],
+      "gpo_name": "SOC-SRV-Acesso-Anonimo",
+      "gpo_settings": [
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Windows Settings\\Security Settings\\Local Policies\\Security Options",
+          "policy": "Network access: Do not allow anonymous enumeration of SAM accounts and shares",
+          "value": "Enabled",
+          "registry": null,
+          "os_requirements": "Sem reinicialização.",
+          "admx": null
+        },
+        {
+          "scope": "computer",
+          "path": "Computer Configuration\\Policies\\Windows Settings\\Security Settings\\Local Policies\\Security Options",
+          "policy": "Network access: Restrict anonymous access to Named Pipes and Shares",
+          "value": "Enabled",
+          "registry": "HKLM\\System\\CurrentControlSet\\Services\\LanManServer\\Parameters\\RestrictNullSessAccess = 1",
+          "os_requirements": "O padrão já é Enabled.",
+          "admx": null
+        }
+      ],
+      "scope_guidance": "Vincular à OU de servidores membros com filtragem de segurança para um grupo piloto (ex.: GG-SOC-GPO-Piloto); expandir removendo o filtro após o período de observação. Controladores de domínio em GPO separada vinculada à OU Domain Controllers.",
+      "server_notes": null,
+      "dc_notes": "\"Do not allow anonymous enumeration...\" não tem efeito em controladores de domínio.",
+      "compatibility_risks": [
+        "Acesso entre domínios por trust de mão única."
+      ],
+      "remediation_steps": [
+        "Criar a GPO e aplicar no piloto; revisar as exceções em NullSessionPipes/NullSessionShares."
+      ],
+      "validation_steps": [
+        "Executar gpupdate /force no piloto e conferir a aplicação com gpresult /h relatorio.html.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Desvincular a GPO (ou remover o grupo do filtro de segurança) e executar gpupdate /force."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/network-access-do-not-allow-anonymous-enumeration-of-sam-accounts-and-shares",
+        "https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/network-access-restrict-anonymous-access-to-named-pipes-and-shares"
+      ],
+      "effort": "baixo",
+      "operational_impact": "Usuários anônimos deixam de listar compartilhamentos; trusts de mão única não recebem acesso por enumeração."
+    },
+    {
+      "key": "spooler-off",
+      "title": "Desativar o Print Spooler em DCs e servidores que não imprimem",
+      "category": "script_manual",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "print spooler",
+        "spooler"
+      ],
+      "gpo_name": null,
+      "gpo_settings": [],
+      "scope_guidance": "Servidores sem função de impressão e controladores de domínio.",
+      "server_notes": null,
+      "dc_notes": "O Defender for Identity recomenda desabilitar o Spooler em DCs; o guia de serviços do Windows Server diverge. Decidir com a equipe de AD.",
+      "compatibility_risks": [
+        "Servidores que imprimem ou publicam impressoras."
+      ],
+      "remediation_steps": [
+        "Confirmar com o responsável que o servidor não tem função de impressão.",
+        "Desativar o serviço: Set-Service -Name Spooler -StartupType Disabled; Stop-Service -Name Spooler.",
+        "Para aplicação em massa por GPO, validar antes o caminho da política de serviços no ambiente (não confirmado em fonte oficial nesta análise)."
+      ],
+      "validation_steps": [
+        "Get-Service Spooler (Stopped, StartType Disabled).",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Set-Service -Name Spooler -StartupType Automatic; Start-Service -Name Spooler."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://learn.microsoft.com/en-us/windows-server/security/windows-services/security-guidelines-for-disabling-system-services-in-windows-server",
+        "https://learn.microsoft.com/en-us/defender-for-identity/security-posture-assessments/identity-infrastructure"
+      ],
+      "effort": "baixo",
+      "operational_impact": "A impressão deixa de funcionar no servidor; nos DCs a limpeza de filas obsoletas no AD (print pruning) passa a ser manual."
+    },
+    {
+      "key": "powershell-v2-remove",
+      "title": "Remover o Windows PowerShell 2.0 Engine",
+      "category": "script_manual",
+      "remediation_type": "definitive",
+      "configuration_ids": [],
+      "name_hints": [
+        "powershell 2",
+        "powershell v2",
+        "powershell version 2"
+      ],
+      "gpo_name": null,
+      "gpo_settings": [],
+      "scope_guidance": "Windows Server 2016 a 2022 (no 2025 o recurso deixou de ser utilizável a partir da atualização de setembro de 2025).",
+      "server_notes": null,
+      "dc_notes": null,
+      "compatibility_risks": [
+        "Scripts e softwares que exigem PowerShell 2.0."
+      ],
+      "remediation_steps": [
+        "Migrar scripts que usam -Version 2 para Windows PowerShell 5.1 ou PowerShell 7.",
+        "Remover o recurso pelo Server Manager: Remove Roles and Features > Windows PowerShell > Windows PowerShell 2.0 Engine."
+      ],
+      "validation_steps": [
+        "Confirmar no Server Manager que o recurso não está instalado.",
+        "Aguardar o Defender refletir a mudança de configuração (4 a 24 h) e o snapshot TVM seguinte (a cada 6 h); confirmar a avaliação como conforme em soc-posture."
+      ],
+      "rollback_steps": [
+        "Reinstalar o recurso pelo Server Manager (depende do .NET Framework 3.5)."
+      ],
+      "dependencies": [],
+      "references": [
+        "https://support.microsoft.com/en-us/topic/powershell-2-0-removal-from-windows-fe6d1edc-2ed2-4c33-b297-afe82a64200a",
+        "https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server"
+      ],
+      "effort": "baixo",
+      "operational_impact": "Scripts legados que exigem a versão 2.0 deixam de funcionar."
+    }
+  ],
+  "software_rules": []
+}

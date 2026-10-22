@@ -79,6 +79,21 @@
       "maxRows": 10000
     },
     {
+      "name": "snapshot.devicetvmsoftwareinventory",
+      "type": "snapshot",
+      "table": "DeviceTvmSoftwareInventory",
+      "queryFile": "devicetvmsoftwareinventory.kql",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "maxRows": 10000
+    },
+    {
+      "name": "insights.remediation",
+      "type": "insights",
+      "enabled": true,
+      "intervalSeconds": 21600
+    },
+    {
       "name": "inventory.deviceinfo",
       "type": "inventory",
       "table": "DeviceInfo",

@@ -32,7 +32,7 @@ describe('fontes novas e contrato KQL', () => {
       intervalSeconds: 3600, ingestionLagMinutes: 1440, overlapMinutes: 0, initialLookbackHours: 26 });
   });
 
-  it.each(['devicetvmsoftwarevulnerabilities', 'devicetvmsecureconfigurationassessment'])('%s é snapshot habilitado e sem corte silencioso', (dataset) => {
+  it.each(['devicetvmsoftwarevulnerabilities', 'devicetvmsecureconfigurationassessment', 'devicetvmsoftwareinventory'])('%s é snapshot habilitado e sem corte silencioso', (dataset) => {
     const s = sources.find((s) => s.name === `snapshot.${dataset}`) as SnapshotSourceConfig;
     expect(s).toMatchObject({ type: 'snapshot', enabled: true, intervalSeconds: 21600, maxRows: 10000 });
     expect(s.query).toContain('| take 10001');

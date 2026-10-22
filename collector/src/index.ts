@@ -9,6 +9,8 @@ import { collectHunting } from './sources/hunting.js';
 import { collectObjects } from './sources/objects.js';
 import { collectInventory } from './sources/inventory.js';
 import { collectSnapshot } from './sources/snapshot.js';
+import { collectInsights } from './sources/insights.js';
+import type { RemediationCatalog } from './insights/catalog.js';
 import type { ExpectedAssetConfig } from './config.js';
 import { errorMessage } from './util.js';
 
@@ -22,7 +24,7 @@ interface SourceState {
 /** Falhas seguidas a partir das quais o /health responde 503 (fonte travada). */
 const FAILURES_UNHEALTHY = 3;
 
-async function runOnce(src: SourceConfig, deps: { pool: Pool; graph: GraphClient; log: Logger; assets: ExpectedAssetConfig[] }): Promise<void> {
+async function runOnce(src: SourceConfig, deps: { pool: Pool; graph: GraphClient; log: Logger; assets: ExpectedAssetConfig[]; catalog: RemediationCatalog }): Promise<void> {
   const counters: RunCounters = { fetched: 0, inserted: 0, changed: 0, apiCalls: 0, throttled: 0 };
   const runId = await startRun(deps.pool, src.name);
   const started = Date.now();
@@ -30,6 +32,7 @@ async function runOnce(src: SourceConfig, deps: { pool: Pool; graph: GraphClient
     if (src.type === 'hunting') await collectHunting(src, deps, counters);
     else if (src.type === 'inventory') await collectInventory(src, deps, counters);
     else if (src.type === 'snapshot') await collectSnapshot(src, deps, counters);
+    else if (src.type === 'insights') await collectInsights(src, deps, counters);
     else await collectObjects(src, deps, counters);
     await finishRun(deps.pool, runId, counters);
     deps.log.info({ source: src.name, ms: Date.now() - started, ...counters }, 'coleta concluída');
@@ -41,7 +44,7 @@ async function runOnce(src: SourceConfig, deps: { pool: Pool; graph: GraphClient
   }
 }
 
-async function loop(src: SourceConfig, deps: { pool: Pool; graph: GraphClient; log: Logger; assets: ExpectedAssetConfig[] }, state: SourceState, signal: AbortSignal): Promise<void> {
+async function loop(src: SourceConfig, deps: { pool: Pool; graph: GraphClient; log: Logger; assets: ExpectedAssetConfig[]; catalog: RemediationCatalog }, state: SourceState, signal: AbortSignal): Promise<void> {
   // Espalha o início das fontes para não disparar tudo junto.
   await sleep(Math.floor(Math.random() * 10_000), undefined, { signal }).catch(() => undefined);
   while (!signal.aborted) {
@@ -117,7 +120,7 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => shutdown('SIGINT'));
 
   log.info({ sources: enabled.map((s) => s.name) }, 'coletor iniciado');
-  const deps = { pool, graph, log, assets: config.assets };
+  const deps = { pool, graph, log, assets: config.assets, catalog: config.catalog };
   await Promise.all(enabled.map((s) => loop(s, deps, states.get(s.name)!, signal)));
   await pool.end();
   log.info('coletor encerrado');

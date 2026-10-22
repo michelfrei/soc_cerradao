@@ -174,11 +174,21 @@ MAPPINGS="$SETUP/mappings/soc-mappings.json"
 { printf '{"template":{"mappings":'; cat "$MAPPINGS"; printf '}}'; } > "$tmp"
 es PUT /_component_template/soc-mappings --data-binary @"$tmp" >/dev/null
 
+echo "Component template: soc-insights-mappings"
+INSIGHTS_MAPPINGS="$SETUP/mappings/soc-insights-mappings.json"
+{ printf '{"template":{"mappings":'; cat "$INSIGHTS_MAPPINGS"; printf '}}'; } > "$tmp"
+es PUT /_component_template/soc-insights-mappings --data-binary @"$tmp" >/dev/null
+
 # Índices já existentes recebem os campos novos (somente inclusão; o ES recusa
 # mudança de tipo). Documentos antigos só ganham os campos novos se republicados.
-if es GET '/_cat/indices/soc-*?h=index' 2>/dev/null | grep -q .; then
+# soc-insights tem mapeamento próprio (contrato de insights) e fica de fora.
+if es GET '/_cat/indices/soc-*,-soc-insights?h=index' 2>/dev/null | grep -q .; then
     echo "Atualizando mapeamento dos índices soc-* existentes"
-    es PUT '/soc-*/_mapping' --data-binary @"$MAPPINGS" >/dev/null
+    es PUT '/soc-*,-soc-insights/_mapping' --data-binary @"$MAPPINGS" >/dev/null
+fi
+if es GET '/_cat/indices/soc-insights?h=index' 2>/dev/null | grep -q .; then
+    echo "Atualizando mapeamento de soc-insights"
+    es PUT '/soc-insights/_mapping' --data-binary @"$INSIGHTS_MAPPINGS" >/dev/null
 fi
 
 for f in "$SETUP"/templates/index-*.json; do
