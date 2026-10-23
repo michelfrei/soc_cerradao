@@ -37,10 +37,11 @@ def in_scope(name)
   (text.include?('srv') || text.include?('fisico')) && !text.include?('note') && !text.include?('micro')
 end
 
+# O Advanced Hunting devolve alguns booleanos como número (IsExploitAvailable = 1/0).
 def boolean(value)
   return value if value == true || value == false
-  return true if value.to_s.downcase == 'true'
-  return false if value.to_s.downcase == 'false'
+  return true if value == 1 || %w[true 1].include?(value.to_s.downcase)
+  return false if value == 0 || %w[false 0].include?(value.to_s.downcase)
   nil
 end
 
@@ -807,5 +808,19 @@ test 'estado de atualização do Windows: atual por servidor e histórico diári
       events[1].get('[@metadata][index]') == 'soc-windows-updates-history-2026.10' && events[1].get('[@metadata][doc_id]') == 'd1|2026-10-23' &&
       events[0].get('[@metadata][version]') == '1792756800000' && events[0].get('[update][latest_kb]') == 'KB5126655' &&
       events[0].get('[update][reboot_required]').nil? && events[0].get('defender').nil?
+  end
+end
+
+test 'exploit disponível chega como número 1/0 do Advanced Hunting' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    [1, 0].map do |flag|
+      { 'soc' => { 'entity' => 'posture', 'dataset' => 'devicetvmsoftwarevulnerabilities' }, 'defender' => {
+        'DeviceName' => 'srv01', 'DeviceId' => 'd1', 'CveId' => 'CVE-2099-0002', 'SoftwareName' => 'app', 'SoftwareVersion' => '1',
+        'IsExploitAvailable' => flag, 'SOCActive' => true, 'SOCState' => 'observed', 'SOCSnapshotAt' => '2026-10-21T12:00:00Z' } }
+    end
+  end
+  expect('1 = true, 0 = false') do |events|
+    events[0].get('[soc][posture][exploit_available]') == true && events[1].get('[soc][posture][exploit_available]') == false
   end
 end

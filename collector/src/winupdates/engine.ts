@@ -28,6 +28,16 @@ export interface ServerInput {
   osSnapshotAt: string | null;
   /** KBs que o Defender recomenda para CVEs do próprio SO neste servidor (evidência). */
   defenderKbs: string[];
+  /** Vulnerabilidades ativas no servidor (todo software); null = sem dados de vulnerabilidade. */
+  vulnerabilities: VulnerabilityStats | null;
+}
+
+export interface VulnerabilityStats {
+  instances: number;
+  cves: number;
+  critical: number;
+  exploit: number;
+  exploitUnknown: number;
 }
 
 export interface WinUpdateOptions {
@@ -63,7 +73,16 @@ export interface WinUpdateDoc {
     reboot_required: boolean | null;
     reboot_required_label: string;
     days_since_latest_release: number | null;
+    oldest_pending_kb: string | null;
+    oldest_pending_release_date: string | null;
     defender_recommended_kbs: string[];
+  };
+  vulnerabilities: {
+    instance_count: number | null;
+    cve_count: number | null;
+    critical_cve_count: number | null;
+    exploit_cve_count: number | null;
+    exploit_unknown_count: number | null;
   };
   status: Status;
   status_label: string;
@@ -156,7 +175,17 @@ export function evaluateServer(s: ServerInput, catalog: CatalogEntry[], opts: Wi
       reboot_required_label: !pending ? (pending === false ? 'Sem atualização pendente' : 'Não determinado')
         : reboot === true ? 'Sim (segundo a Microsoft)' : reboot === false ? 'Não (segundo a Microsoft)' : 'Não informado pela Microsoft',
       days_since_latest_release: pending && latest ? Math.floor((now.getTime() - Date.parse(latest.releaseDate)) / 86_400_000) : null,
+      // Primeira atualização de segurança da própria build ausente: desde quando o servidor está desatualizado.
+      oldest_pending_kb: newer[0]?.kb ?? null,
+      oldest_pending_release_date: newer[0]?.releaseDate ?? null,
       defender_recommended_kbs: [...new Set(s.defenderKbs)].sort(),
+    },
+    vulnerabilities: {
+      instance_count: s.vulnerabilities?.instances ?? null,
+      cve_count: s.vulnerabilities?.cves ?? null,
+      critical_cve_count: s.vulnerabilities?.critical ?? null,
+      exploit_cve_count: s.vulnerabilities?.exploit ?? null,
+      exploit_unknown_count: s.vulnerabilities?.exploitUnknown ?? null,
     },
     status,
     status_label: STATUS_LABEL[status],

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseSources } from '../src/config.js';
-import { addPage, type SecurityUpdate } from '../src/sources/msrc.js';
+import { addPage, applyReleaseVotes, type ReleaseVotes, type SecurityUpdate } from '../src/sources/msrc.js';
 import { buildServers } from '../src/sources/winupdates.js';
 import { evaluateServer, isInScope, productName, type CatalogEntry, type ServerInput } from '../src/winupdates/engine.js';
 
@@ -8,9 +8,14 @@ const kbArticle = (kb: string, build: string, extra: Record<string, unknown> = {
   downloadName: 'Security Update', supercedence: '5000000', rebootRequired: 'Yes', fixedBuildNumber: build, ...extra });
 
 describe('catálogo MSRC', () => {
-  it('só Security Update com build 10.0.x.y; data é a primeira publicação; Server Core une ao produto', () => {
+  it('só Security Update com build 10.0.x.y; data é a mais frequente; Server Core une ao produto; ADV fica fora', () => {
     const catalog = new Map<string, SecurityUpdate>();
+    const votes: ReleaseVotes = new Map();
     addPage(catalog, [
+      // CVE antiga que recebeu o KB novo mantém a data original: não pode virar a data do KB.
+      { product: 'Windows Server 2022', releaseDate: '2018-11-14T08:00:00-08:00', cveNumber: 'CVE-2018-0001', kbArticles: [kbArticle('5126655', '10.0.20348.5761')] },
+      { product: 'Windows Server 2022', releaseDate: '2026-10-13T07:00:00-07:00', cveNumber: 'CVE-2026-0002', kbArticles: [kbArticle('5126655', '10.0.20348.5761')] },
+      { product: 'Windows Server 2016', releaseDate: '2018-11-14T08:00:00-08:00', cveNumber: 'ADV990001', kbArticles: [kbArticle('5126649', '10.0.14393.9596')] },
       { product: 'Windows Server 2022', releaseDate: '2026-10-13T07:00:00-07:00', kbArticles: [kbArticle('5126655', '10.0.20348.5761')] },
       { product: 'Windows Server 2022 (Server Core installation)', releaseDate: '2026-09-08T07:00:00-07:00', kbArticles: [kbArticle('5126655', '10.0.20348.5761')] },
       { product: 'Windows Server 2022', releaseDate: '2026-10-13T07:00:00-07:00', kbArticles: [
@@ -19,10 +24,11 @@ describe('catálogo MSRC', () => {
         kbArticle('5126702', '10.0.20348.5800', { downloadName: 'Monthly Rollup' }),
       ] },
       { product: 'Windows Server 2016', releaseDate: '2026-10-13T07:00:00-07:00', kbArticles: [kbArticle('5126868', '10.0.14393.9612', { rebootRequired: 'No' })] },
-    ]);
+    ], votes);
+    applyReleaseVotes(catalog, votes);
     expect([...catalog.values()]).toEqual([
       { kb: 'KB5126655', product: 'Windows Server 2022', fixedBuild: '10.0.20348.5761', buildMajor: 20348, ubr: 5761,
-        releaseDate: '2026-09-08T14:00:00.000Z', supersedes: 'KB5000000', rebootRequired: true, url: 'https://support.microsoft.com/help/5126655' },
+        releaseDate: '2026-10-13T14:00:00.000Z', supersedes: 'KB5000000', rebootRequired: true, url: 'https://support.microsoft.com/help/5126655' },
       expect.objectContaining({ kb: 'KB5126868', buildMajor: 14393, rebootRequired: false }),
     ]);
   });
@@ -46,7 +52,8 @@ const catalog = [
   entry('KB5123099', 14393, 9512, '2026-09-08T14:00:00.000Z'), entry('KB5126868', 14393, 9612, '2026-10-13T14:00:00.000Z', null),
 ];
 const server = (osVersion: string | null, extra: Partial<ServerInput> = {}): ServerInput => ({ deviceId: 'd1', deviceName: 'SRV03.usinacerradao.com.br',
-  osPlatform: 'WindowsServer2022', lastSeen: '2026-10-23T11:00:00Z', osVersion, osSnapshotAt: '2026-10-23T10:00:00.000Z', defenderKbs: ['KB5126655'], ...extra });
+  osPlatform: 'WindowsServer2022', lastSeen: '2026-10-23T11:00:00Z', osVersion, osSnapshotAt: '2026-10-23T10:00:00.000Z', defenderKbs: ['KB5126655'],
+  vulnerabilities: { instances: 120, cves: 100, critical: 7, exploit: 3, exploitUnknown: 0 }, ...extra });
 
 describe('estado de atualização por servidor', () => {
   it('compara com a atualização da própria build e trata a pendente como cumulativa', () => {
@@ -57,6 +64,14 @@ describe('estado de atualização por servidor', () => {
         pending: true, pending_kb: 'KB5126655', pending_superseded_count: 1, reboot_required: true,
         reboot_required_label: 'Sim (segundo a Microsoft)', days_since_latest_release: 9 } });
     expect(d.status_reason).toMatch(/2 atualização\(ões\) de segurança/);
+    expect(d.update).toMatchObject({ oldest_pending_kb: 'KB5122882', oldest_pending_release_date: '2026-09-08T14:00:00.000Z' });
+    expect(d.vulnerabilities).toEqual({ instance_count: 120, cve_count: 100, critical_cve_count: 7, exploit_cve_count: 3, exploit_unknown_count: 0 });
+  });
+
+  it('pendente mais antiga é a primeira atualização da própria build ausente; em dia não tem', () => {
+    expect(evaluateServer(server('10.0.20348.169'), catalog, opts).update).toMatchObject({ oldest_pending_kb: 'KB5099540' });
+    expect(evaluateServer(server('10.0.20348.5761'), catalog, opts).update).toMatchObject({ oldest_pending_kb: null, oldest_pending_release_date: null });
+    expect(evaluateServer(server('10.0.20348.5761', { vulnerabilities: null }), catalog, opts).vulnerabilities.cve_count).toBeNull();
   });
 
   it('Windows Server 2016 não é comparado com KB do 2022', () => {
@@ -115,7 +130,10 @@ describe('estado de atualização por servidor', () => {
       { device_id: 'd1', payload: { SoftwareName: 'windows_server_2022', SoftwareVersion: '10.0.20348.5761', SOCSnapshotAt: '2026-10-23T10:00:00.000Z' } },
     ];
     expect(buildServers(devices, rows, new Map([['d1', ['5126655']]]), 'srv')).toEqual([{ deviceId: 'd1', deviceName: 'SRV03',
-      osPlatform: 'WindowsServer2022', lastSeen: '2026-10-23T11:00:00Z', osVersion: '10.0.20348.5761', osSnapshotAt: '2026-10-23T10:00:00.000Z', defenderKbs: ['KB5126655'] }]);
+      osPlatform: 'WindowsServer2022', lastSeen: '2026-10-23T11:00:00Z', osVersion: '10.0.20348.5761', osSnapshotAt: '2026-10-23T10:00:00.000Z',
+      defenderKbs: ['KB5126655'], vulnerabilities: null }]);
+    // Snapshot concluído: servidor sem linhas tem zero reportado, não desconhecido.
+    expect(buildServers(devices, rows, new Map(), 'srv', new Map(), true)[0]!.vulnerabilities).toEqual({ instances: 0, cves: 0, critical: 0, exploit: 0, exploitUnknown: 0 });
   });
 
   it('winupdates exige fonte msrc declarada', () => {

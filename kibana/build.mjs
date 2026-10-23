@@ -737,14 +737,23 @@ const wu = {
     ['days', col.max('update.days_since_latest_release', 'Dias desde o lançamento (pendentes)')],
     ['older', col.max('update.pending_superseded_count', 'Atualizações anteriores substituídas')],
     ['seen', col.max('collection.collected_at', 'Última coleta', 'date')]]),
+  exposure: table('soc-wu-exposure', 'Exposição por servidor — atraso do Windows e vulnerabilidades reportadas pelo Defender', 'soc-windows-updates', WU, [
+    ['host.name', 'Servidor', 200], ['windows.product', 'Windows Server', 1], ['update.oldest_pending_kb', 'Atualização pendente mais antiga', 1],
+  ], [['since', col.max('update.oldest_pending_release_date', 'Lançada em (desatualizado desde)', 'date')],
+    ['cves', col.max('vulnerabilities.cve_count', 'CVEs distintas (todo software)')],
+    ['crit', col.max('vulnerabilities.critical_cve_count', 'Críticas')],
+    ['expl', col.max('vulnerabilities.exploit_cve_count', 'Com exploit público')]], 'cves'),
+  exploitTotal: metric('soc-wu-exploit', 'Servidores com CVE com exploit público', 'soc-windows-updates', `${WU} and vulnerabilities.exploit_cve_count > 0`),
   trend: timeline('soc-wu-trend', 'Histórico diário — servidores por situação', 'soc-windows-updates-history', WU, 'status_label', 'Situação', 4),
 };
 wu.table.attributes.state.datasourceStates.formBased.layers[LAYER].columns.m.label = 'Documentos (1 por servidor)';
 wu.trend.attributes.state.datasourceStates.formBased.layers[LAYER].columns.m.label = 'Servidores';
+wu.exposure.attributes.state.datasourceStates.formBased.layers[LAYER].columns.m.label = 'Documentos (1 por servidor)';
 const wuSearch = search('soc-search-windows-updates', 'Detalhe por servidor — motivo, evidências do Defender e datas de coleta', 'soc-windows-updates', WU,
   ['host.name', 'windows.product', 'windows.version', 'status_label', 'status_reason', 'update.latest_kb', 'update.latest_release_date',
     'update.installed_kb', 'update.installed_match', 'update.pending_kb', 'update.reboot_required_label',
-    'update.defender_recommended_kbs', 'collection.device_last_seen', 'collection.build_snapshot_at', 'collection.catalog_updated_at', 'collection.collected_at']);
+    'update.oldest_pending_kb', 'update.oldest_pending_release_date', 'vulnerabilities.cve_count', 'vulnerabilities.critical_cve_count',
+    'vulnerabilities.exploit_cve_count', 'update.defender_recommended_kbs', 'collection.device_last_seen', 'collection.build_snapshot_at', 'collection.catalog_updated_at', 'collection.collected_at']);
 wuSearch.attributes.sort = [['host.name', 'asc']];
 detailSearches.push(wuSearch);
 
@@ -875,8 +884,13 @@ dashboards.push(dashboard('soc-dashboard-windows-updates', 'SOC - Atualização 
     [wu.total, 0, 13, 10, 8], [wu.ok, 10, 13, 10, 8], [wu.pending, 20, 13, 10, 8], [wu.unknown, 30, 13, 9, 8], [wu.stale, 39, 13, 9, 8],
     [wu.status, 0, 21, 16, 14], [wu.version, 16, 21, 32, 14],
     [wu.table, 0, 35, 48, 24],
-    [wuSearch, 0, 59, 48, 22],
-    [wu.trend, 0, 81, 48, 14],
+    [markdown('**Exposição por servidor:** "Atualização pendente mais antiga" é a primeira atualização de segurança da própria build que o servidor ainda não tem, ' +
+      'e a data mostra desde quando ele está desatualizado. Não é o KB mais antigo recomendado pelo Defender, que pode citar KBs de outra build. ' +
+      'CVEs são distintas por servidor e incluem todo o software, não só o Windows; não some entre servidores. Exploit público disponível não comprova exploração.'), 0, 59, 40, 6],
+    [wu.exploitTotal, 40, 59, 8, 6],
+    [wu.exposure, 0, 65, 48, 24],
+    [wuSearch, 0, 89, 48, 22],
+    [wu.trend, 0, 111, 48, 14],
   ], 'now-30d', [
     ['host.name', 'Servidor', 'soc-windows-updates'], ['windows.product', 'Windows Server', 'soc-windows-updates'],
     ['status_label', 'Situação', 'soc-windows-updates'],

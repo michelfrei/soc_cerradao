@@ -82,6 +82,12 @@
         },
         "defender_recommended_kbs": {
           "type": "keyword"
+        },
+        "oldest_pending_kb": {
+          "type": "keyword"
+        },
+        "oldest_pending_release_date": {
+          "type": "date"
         }
       }
     },
@@ -146,6 +152,25 @@
         },
         "dataset": {
           "type": "keyword"
+        }
+      }
+    },
+    "vulnerabilities": {
+      "properties": {
+        "instance_count": {
+          "type": "integer"
+        },
+        "cve_count": {
+          "type": "integer"
+        },
+        "critical_cve_count": {
+          "type": "integer"
+        },
+        "exploit_cve_count": {
+          "type": "integer"
+        },
+        "exploit_unknown_count": {
+          "type": "integer"
         }
       }
     }

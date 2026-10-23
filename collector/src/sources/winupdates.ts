@@ -1,7 +1,7 @@
 import type { WinUpdatesSourceConfig } from '../config.js';
 import { setCheckpoint, withTransaction, type Client, type Pool, type RunCounters } from '../db.js';
 import type { Logger } from '../logger.js';
-import { evaluateServer, isInScope, type CatalogEntry, type ServerInput, type WinUpdateDoc } from '../winupdates/engine.js';
+import { evaluateServer, isInScope, type CatalogEntry, type ServerInput, type VulnerabilityStats, type WinUpdateDoc } from '../winupdates/engine.js';
 
 function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -18,6 +18,8 @@ export function buildServers(
   osRows: { device_id: string; payload: Record<string, unknown> }[],
   defenderKbs: Map<string, string[]>,
   prefix: string,
+  vulnerabilities: Map<string, VulnerabilityStats> = new Map(),
+  vulnerabilitySnapshotDone = false,
 ): ServerInput[] {
   const servers: ServerInput[] = [];
   for (const d of devices) {
@@ -34,6 +36,8 @@ export function buildServers(
       osVersion: row ? text(row.payload.SoftwareVersion) : null,
       osSnapshotAt: row ? text(row.payload.SOCSnapshotAt) : null,
       defenderKbs: (defenderKbs.get(id) ?? []).map((k) => (/^\d+$/.test(k) ? `KB${k}` : k)),
+      // Com snapshot concluído, servidor sem linhas tem zero vulnerabilidades reportadas; sem snapshot, desconhecido.
+      vulnerabilities: vulnerabilities.get(id) ?? (vulnerabilitySnapshotDone ? { instances: 0, cves: 0, critical: 0, exploit: 0, exploitUnknown: 0 } : null),
     });
   }
   return servers;
@@ -53,6 +57,14 @@ export async function storeWinUpdates(client: Client, src: WinUpdatesSourceConfi
     FROM soc.posture_state
     WHERE dataset = 'devicetvmsoftwarevulnerabilities' AND active AND lower(payload->>'SoftwareName') LIKE 'windows\\_server%'
     GROUP BY device_id`);
+  // Exploit chega como 1/0 (ou true/false); outro valor é desconhecido, não "sem exploit".
+  const vulns = await client.query<{ device_id: string; instances: number; cves: number; critical: number; exploit: number; unknown: number }>(`
+    SELECT device_id, count(*)::int AS instances, count(DISTINCT payload->>'CveId')::int AS cves,
+      count(DISTINCT payload->>'CveId') FILTER (WHERE lower(payload->>'VulnerabilitySeverityLevel') = 'critical')::int AS critical,
+      count(DISTINCT payload->>'CveId') FILTER (WHERE payload->>'IsExploitAvailable' IN ('1', 'true'))::int AS exploit,
+      count(DISTINCT payload->>'CveId') FILTER (WHERE coalesce(payload->>'IsExploitAvailable', '') NOT IN ('0', '1', 'true', 'false'))::int AS unknown
+    FROM soc.posture_state WHERE dataset = 'devicetvmsoftwarevulnerabilities' AND active GROUP BY device_id`);
+  const vulnSnapshot = await client.query('SELECT 1 FROM soc.collector_checkpoint WHERE source = $1', [src.vulnerabilitySource]);
   const catalog = await client.query<{ kb: string; build_major: number; ubr: number; fixed_build: string; release_date: Date; reboot_required: boolean | null; url: string | null }>(
     'SELECT kb, build_major, ubr, fixed_build, release_date, reboot_required, url FROM soc.windows_security_update');
   const checkpoint = await client.query<{ watermark: Date }>('SELECT watermark FROM soc.collector_checkpoint WHERE source = $1', [src.msrcSource]);
@@ -60,7 +72,9 @@ export async function storeWinUpdates(client: Client, src: WinUpdatesSourceConfi
   const entries: CatalogEntry[] = catalog.rows.map((r) => ({ kb: r.kb, buildMajor: r.build_major, ubr: r.ubr, fixedBuild: r.fixed_build,
     releaseDate: r.release_date.toISOString(), rebootRequired: r.reboot_required, url: r.url }));
   const servers = buildServers(devices.rows.map((r) => r.payload), osRows.rows,
-    new Map(kbs.rows.map((r) => [r.device_id, r.kbs ?? []])), src.namePrefix);
+    new Map(kbs.rows.map((r) => [r.device_id, r.kbs ?? []])), src.namePrefix,
+    new Map(vulns.rows.map((r) => [r.device_id, { instances: r.instances, cves: r.cves, critical: r.critical, exploit: r.exploit, exploitUnknown: r.unknown }])),
+    (vulnSnapshot.rowCount ?? 0) > 0);
   const opts = { generatedAt, catalogUpdatedAt: checkpoint.rows[0]?.watermark.toISOString() ?? null,
     deviceStaleHours: src.deviceStaleHours, snapshotStaleHours: src.snapshotStaleHours, catalogStaleHours: src.catalogStaleHours };
   const docs = servers.map((s) => evaluateServer(s, entries, opts));

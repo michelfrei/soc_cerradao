@@ -104,6 +104,7 @@ const WinUpdatesSource = BaseSource.extend({
   intervalSeconds: z.number().int().min(300).default(3600),
   namePrefix: z.string().min(1).default('srv'),
   msrcSource: z.string().default('msrc.windows-server'),
+  vulnerabilitySource: z.string().default('snapshot.devicetvmsoftwarevulnerabilities'),
   deviceStaleHours: z.number().int().min(1).default(24),
   snapshotStaleHours: z.number().int().min(1).default(36),
   catalogStaleHours: z.number().int().min(1).default(48),

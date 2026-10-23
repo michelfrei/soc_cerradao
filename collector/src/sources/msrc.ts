@@ -7,8 +7,13 @@ import { errorMessage } from '../util.js';
 /**
  * Catálogo de atualizações de segurança do Windows Server a partir do Security
  * Update Guide (MSRC). Só "Security Update": previews opcionais e hotpatch não
- * entram. A data de lançamento é a menor releaseDate em que o KB aparece.
+ * entram, nem avisos ADV (ex.: ADV990001, servicing stack). A data de lançamento
+ * é a releaseDate mais frequente entre os registros do KB: a Microsoft também anexa
+ * KBs novos a CVEs antigas, que mantêm a data original (a menor data engana).
  */
+
+/** Contagem de registros por data, para escolher a data mais frequente do KB. */
+export type ReleaseVotes = Map<string, Map<string, number>>;
 
 export interface SecurityUpdate {
   kb: string;
@@ -43,13 +48,13 @@ function reboot(value: unknown): boolean | null {
 }
 
 /** Acumula uma página no catálogo. Registros sem build 10.0.x.y ou de outro tipo são ignorados. */
-export function addPage(catalog: Map<string, SecurityUpdate>, records: unknown[]): void {
+export function addPage(catalog: Map<string, SecurityUpdate>, records: unknown[], votes: ReleaseVotes = new Map()): void {
   for (const record of records) {
     if (!record || typeof record !== 'object') throw new Error('MSRC: registro inválido');
-    const r = record as { product?: unknown; releaseDate?: unknown; kbArticles?: unknown };
+    const r = record as { product?: unknown; releaseDate?: unknown; kbArticles?: unknown; cveNumber?: unknown };
     const product = str(r.product);
     const released = str(r.releaseDate);
-    if (!product || !released || !Array.isArray(r.kbArticles)) continue;
+    if (!product || !released || !Array.isArray(r.kbArticles) || /^ADV/i.test(str(r.cveNumber) ?? '')) continue;
     const date = new Date(released);
     if (Number.isNaN(date.getTime())) throw new Error(`MSRC: releaseDate inválida: ${released}`);
     for (const a of r.kbArticles as KbArticle[]) {
@@ -61,8 +66,10 @@ export function addPage(catalog: Map<string, SecurityUpdate>, records: unknown[]
       const key = `${kbNumber}|${m[1]}`;
       const previous = catalog.get(key);
       const iso = date.toISOString();
+      const kbVotes = votes.get(key) ?? new Map<string, number>();
+      kbVotes.set(iso, (kbVotes.get(iso) ?? 0) + 1);
+      votes.set(key, kbVotes);
       if (previous) {
-        if (iso < previous.releaseDate) previous.releaseDate = iso;
         if (previous.fixedBuild !== build) throw new Error(`MSRC: KB${kbNumber} com builds diferentes (${previous.fixedBuild}, ${build})`);
         continue;
       }
@@ -74,6 +81,14 @@ export function addPage(catalog: Map<string, SecurityUpdate>, records: unknown[]
         rebootRequired: reboot(a.rebootRequired), url: str(a.articleUrl),
       });
     }
+  }
+}
+
+/** Data mais frequente; empate fica com a mais antiga. */
+export function applyReleaseVotes(catalog: Map<string, SecurityUpdate>, votes: ReleaseVotes): void {
+  for (const [key, update] of catalog) {
+    const best = [...(votes.get(key) ?? [])].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+    if (best) update.releaseDate = best[0];
   }
 }
 
@@ -95,7 +110,7 @@ async function getJson(url: string, timeoutMs: number, log: Logger, counters: Ru
 
 /** Lê todas as páginas de um produto; qualquer falha recusa a atualização do catálogo. */
 export async function fetchProduct(src: MsrcSourceConfig, product: string, catalog: Map<string, SecurityUpdate>,
-  log: Logger, counters: RunCounters): Promise<number> {
+  log: Logger, counters: RunCounters, votes: ReleaseVotes = new Map()): Promise<number> {
   const params = new URLSearchParams({ $filter: `product eq '${product.replace(/'/g, "''")}'`, $top: String(src.pageSize) });
   let url: string | null = `${src.baseUrl}?${params.toString()}`;
   let records = 0;
@@ -103,7 +118,7 @@ export async function fetchProduct(src: MsrcSourceConfig, product: string, catal
     if (page >= src.maxPages) throw new Error(`MSRC: ${product} excedeu ${src.maxPages} páginas; catálogo não atualizado`);
     const body = await getJson(url, src.requestTimeoutMs, log, counters);
     if (!Array.isArray(body.value)) throw new Error(`MSRC: resposta sem value para ${product}`);
-    addPage(catalog, body.value);
+    addPage(catalog, body.value, votes);
     records += body.value.length;
     url = typeof body['@odata.nextLink'] === 'string' ? body['@odata.nextLink'] : null;
   }
@@ -120,7 +135,7 @@ export async function storeCatalog(client: Client, src: MsrcSourceConfig, update
     FROM jsonb_to_recordset($1::jsonb) AS r(kb text, "buildMajor" int, product text, "fixedBuild" text, ubr int,
       "releaseDate" timestamptz, supersedes text, "rebootRequired" boolean, url text)
     ON CONFLICT (kb, build_major) DO UPDATE SET product = EXCLUDED.product, fixed_build = EXCLUDED.fixed_build,
-      ubr = EXCLUDED.ubr, release_date = least(u.release_date, EXCLUDED.release_date), supersedes = EXCLUDED.supersedes,
+      ubr = EXCLUDED.ubr, release_date = EXCLUDED.release_date, supersedes = EXCLUDED.supersedes,
       reboot_required = EXCLUDED.reboot_required, url = EXCLUDED.url, updated_at = EXCLUDED.updated_at`,
   [JSON.stringify(updates), at]);
   await setCheckpoint(client, src.name, at);
@@ -133,7 +148,9 @@ export async function collectMsrc(src: MsrcSourceConfig, deps: { pool: Pool; log
   counters.windowStart = at;
   counters.windowEnd = at;
   const catalog = new Map<string, SecurityUpdate>();
-  for (const product of src.products) counters.fetched += await fetchProduct(src, product, catalog, deps.log, counters);
+  const votes: ReleaseVotes = new Map();
+  for (const product of src.products) counters.fetched += await fetchProduct(src, product, catalog, deps.log, counters, votes);
+  applyReleaseVotes(catalog, votes);
   const result = await withTransaction(deps.pool, (client) => storeCatalog(client, src, [...catalog.values()], at));
   counters.inserted = result.inserted;
   counters.changed = result.changed;

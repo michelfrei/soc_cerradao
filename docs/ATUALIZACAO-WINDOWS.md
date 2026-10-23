@@ -11,7 +11,8 @@ não reinicia servidores.
 |---|---|---|
 | Servidores, versão do Windows, último contato | Defender `DeviceInfo` (fonte `inventory.deviceinfo`) | `OSPlatform` = WindowsServer2016/2019/2022 |
 | Build completa (ex.: 10.0.20348.4405) | Defender `DeviceTvmSoftwareInventory`, linha do próprio SO (fonte `snapshot.devicetvmsoftwareinventory`) | A build muda após a instalação e a reinicialização |
-| KB de segurança, build corrigida, lançamento, substituição, reinicialização | Security Update Guide da Microsoft (MSRC), API pública `api.msrc.microsoft.com/sug/v2.0` (fonte `msrc.windows-server`, a cada 12 h) | Só `Security Update`: previews opcionais, hotpatch e rollups ficam fora |
+| KB de segurança, build corrigida, lançamento, substituição, reinicialização | Security Update Guide da Microsoft (MSRC), API pública `api.msrc.microsoft.com/sug/v2.0` (fonte `msrc.windows-server`, a cada 12 h) | Só `Security Update`: previews opcionais, hotpatch, rollups e avisos ADV (servicing stack) ficam fora |
+| CVEs distintas, críticas e com exploit público por servidor | Defender `DeviceTvmSoftwareVulnerabilities` (todo software instalado) | `IsExploitAvailable` chega como 1/0 |
 | KBs recomendados pelo Defender para CVEs do SO | Defender `DeviceTvmSoftwareVulnerabilities` | Evidência no detalhe; não decide a situação |
 
 Ficam **fora do painel**, porque o Defender não fornece: data e hora da
@@ -27,9 +28,10 @@ coleta no próprio servidor (script por GPO). Pode ser feito numa etapa futura.
    build principal (14393 = 2016, 17763 = 2019, 20348 = 2022, 26100 = 2025),
    nunca com um KB único.
 3. **Atualização de segurança mais recente aplicável:** o KB com a maior build
-   corrigida para aquela build principal. **Lançamento Microsoft** é a primeira
-   data em que o KB aparece no Security Update Guide (fuso original preservado,
-   exibido em America/Sao_Paulo).
+   corrigida para aquela build principal. **Lançamento Microsoft** é a data mais
+   frequente entre os registros do KB no Security Update Guide. A menor data
+   engana: a Microsoft anexa KBs novos a CVEs antigas, que mantêm a data original.
+   Fuso original preservado, exibido em America/Sao_Paulo.
 4. **Atualização refletida na build atual:** o KB cuja build corrigida é igual à
    do servidor (`exata`). Se a build ficar entre duas atualizações, vale a anterior
    (`equivalente`). Se ficar acima da última de segurança, é provável preview
@@ -42,7 +44,15 @@ coleta no próprio servidor (script por GPO). Pode ser feito numa etapa futura.
    sobre a atualização pendente. Não significa que o servidor esteja com
    reinicialização pendente. Valor ausente aparece como "Não informado pela
    Microsoft", nunca "Não".
-7. **Situação:** `em_dia`, `pendente`, `nao_determinado` (sem build ou sem
+7. **Atualização pendente mais antiga:** a primeira atualização de segurança da
+   própria build que o servidor ainda não tem; a data indica desde quando ele está
+   desatualizado. Não é o KB mais antigo recomendado pelo Defender, que pode citar
+   KBs de outra build (ex.: KB de 2019 para um Windows Server 2022).
+8. **Vulnerabilidades:** CVEs distintas por servidor de todo o software reportado
+   pelo Defender, críticas e com exploit público disponível. Servidor em dia no
+   Windows pode ter muitas CVEs de outros softwares. Sem snapshot concluído, o valor
+   é desconhecido; não some servidores, porque a mesma CVE aparece em vários.
+9. **Situação:** `em_dia`, `pendente`, `nao_determinado` (sem build ou sem
    catálogo para a build) ou `coleta_desatualizada` (sensor sem contato há mais de
    24 h, build coletada há mais de 36 h ou catálogo atualizado há mais de 48 h).
    Sem prazo de implantação definido pela organização, não existe "atrasado".
@@ -64,7 +74,10 @@ Campos principais: `host.name`, `windows.product`, `windows.version`,
 `update.installed_kb`, `update.installed_match`, `update.pending`,
 `update.pending_kb`, `update.pending_superseded_count`,
 `update.reboot_required`, `update.reboot_required_label`,
-`update.days_since_latest_release`, `update.defender_recommended_kbs`,
+`update.days_since_latest_release`, `update.oldest_pending_kb`,
+`update.oldest_pending_release_date`, `update.defender_recommended_kbs`,
+`vulnerabilities.cve_count`, `vulnerabilities.critical_cve_count`,
+`vulnerabilities.exploit_cve_count`, `vulnerabilities.instance_count`,
 `status`, `status_label`, `status_reason`, `collection.device_last_seen`,
 `collection.build_snapshot_at`, `collection.catalog_updated_at`,
 `collection.collected_at`. Datas em ISO 8601 UTC.
