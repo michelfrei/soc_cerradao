@@ -1,9 +1,10 @@
-// Software com fim de suporte informado pelo Defender; base para remoção/substituição.
-// Linhas sem EndOfSupportStatus não entram: ausência não comprova suporte vigente.
+// Software com fim de suporte informado pelo Defender (base para remoção/substituição)
+// e a linha do próprio Windows Server com a build completa (estado de atualização).
+// Sem EndOfSupportStatus, as demais linhas não entram: ausência não comprova suporte vigente.
 DeviceTvmSoftwareInventory
 | where (DeviceName contains "srv" or DeviceName contains "fisico")
     and DeviceName !contains "note" and DeviceName !contains "micro" {{partition}}
-| where isnotempty(EndOfSupportStatus)
+| where isnotempty(EndOfSupportStatus) or (SoftwareVendor == "microsoft" and SoftwareName startswith "windows_server")
 | project DeviceId, DeviceName, OSPlatform, OSVersion, OSArchitecture,
           SoftwareVendor, SoftwareName, SoftwareVersion, EndOfSupportStatus, EndOfSupportDate,
           ProductCodeCpe = column_ifexists("ProductCodeCpe", "")

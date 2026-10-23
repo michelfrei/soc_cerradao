@@ -24,6 +24,8 @@ const DATA_VIEWS = [
   { id: 'soc-devices', title: 'soc-devices', name: 'SOC - Inventário conhecido', timeless: true },
   { id: 'soc-posture', title: 'soc-posture', name: 'SOC - Postura atual TVM', timeless: true },
   { id: 'soc-insights', title: 'soc-insights', name: 'SOC - Insights de remediação', timeless: true },
+  { id: 'soc-windows-updates', title: 'soc-windows-updates', name: 'SOC - Atualização do Windows (estado atual)', timeless: true },
+  { id: 'soc-windows-updates-history', title: 'soc-windows-updates-history-*', name: 'SOC - Atualização do Windows (histórico diário)' },
   { id: 'soc-metrics', title: 'soc-metrics-*', name: 'SOC - Coleta e capacidade' },
   { id: 'soc-metrics-current', title: 'soc-metrics-*', name: 'SOC - Últimas execuções sem corte temporal', timeless: true },
   { id: 'soc-elastic-alerts', title: '.alerts-security.alerts-soc', name: 'SOC - Alertas de detecção Elastic' },
@@ -76,9 +78,9 @@ const col = {
     filter: { query: `${field} : *`, language: 'kuery' },
   }),
   // Um documento por grupo (ex.: insight_id): o máximo é o próprio valor, sem soma.
-  max: (field, label) => ({
-    label, customLabel: true, dataType: 'number', operationType: 'max', sourceField: field,
-    isBucketed: false, scale: 'ratio', params: { emptyAsNull: true },
+  max: (field, label, dataType = 'number') => ({
+    label, customLabel: true, dataType, operationType: 'max', sourceField: field,
+    isBucketed: false, scale: dataType === 'date' ? 'interval' : 'ratio', params: { emptyAsNull: true },
   }),
   terms: (field, label, size, orderBy, missingBucket = false) => ({
     label, customLabel: true, dataType: TERM_TYPES[field] || 'string', operationType: 'terms', sourceField: field,
@@ -214,13 +216,13 @@ const markdown = (text) => ({
  */
 function dashboard(id, title, description, panels, timeFrom = 'now-7d', controls = []) {
   const references = [];
-  // Controles (listas de valores) no topo: [campo, título], sobre a data view soc-events.
-  const controlPanels = Object.fromEntries(controls.map(([field, label], order) => {
+  // Controles (listas de valores) no topo: [campo, título, data view (padrão soc-events)].
+  const controlPanels = Object.fromEntries(controls.map(([field, label, dataView = 'soc-events'], order) => {
     const cid = `ctl-${field.replace(/[^a-z0-9]+/gi, '-')}`;
-    references.push({ name: `controlGroup_${cid}:optionsListDataView`, type: 'index-pattern', id: 'soc-events' });
+    references.push({ name: `controlGroup_${cid}:optionsListDataView`, type: 'index-pattern', id: dataView });
     return [cid, {
       order, width: 'medium', grow: true, type: 'optionsListControl',
-      explicitInput: { id: cid, dataViewId: 'soc-events', fieldName: field, title: label, searchTechnique: 'prefix',
+      explicitInput: { id: cid, dataViewId: dataView, fieldName: field, title: label, searchTechnique: 'prefix',
         selectedOptions: [], enhancements: {} },
     }];
   }));
@@ -303,6 +305,7 @@ const NAV_ITEMS = [
   ['soc-dashboard-cobertura', 'Cobertura e capacidade'],
   ['soc-dashboard-processos-rede', 'Processos e conexões'], ['soc-dashboard-exposicao', 'Exposição e proteção'],
   ['soc-dashboard-acessos-servidores', 'Acessos aos servidores'], ['soc-dashboard-remediacao', 'Remediação'],
+  ['soc-dashboard-windows-updates', 'Atualização do Windows'],
 ];
 const nav = () => markdown(NAV_ITEMS.map(([id, title]) => `[${title}](/s/soc/app/dashboards#/view/${id})`).join(' · ') +
   '\n\n**Escopo:** nome contém srv ou fisico, exclui note ou micro. Para correlacionar, filtre por **host.id** e **soc.identity.correlation_key**. ' +
@@ -713,8 +716,40 @@ const remediationSearch = search('soc-search-insights', 'Insights detalhados —
 remediationSearch.attributes.sort = [['priority_score', 'desc']];
 detailSearches.push(remediationSearch);
 
+// Atualização do Windows: um documento por servidor SRV*, estado atual sem corte temporal ---
+
+const WU = 'host.name : srv*';
+const wu = {
+  total: metric('soc-wu-total', 'Servidores SRV* Windows Server monitorados', 'soc-windows-updates', WU),
+  ok: metric('soc-wu-ok', 'Em dia com a atualização de segurança', 'soc-windows-updates', `${WU} and status : "em_dia"`),
+  pending: metric('soc-wu-pending', 'Com atualização de segurança pendente', 'soc-windows-updates', `${WU} and status : "pendente"`),
+  unknown: metric('soc-wu-unknown', 'Não determinado', 'soc-windows-updates', `${WU} and status : "nao_determinado"`),
+  stale: metric('soc-wu-stale', 'Coleta desatualizada', 'soc-windows-updates', `${WU} and status : "coleta_desatualizada"`),
+  status: donut('soc-wu-status', 'Servidores por situação', 'soc-windows-updates', WU, 'status_label', 'Situação', 4),
+  version: ranking('soc-wu-version', 'Servidores por versão do Windows Server e situação', 'soc-windows-updates', WU,
+    'windows.product', 'Windows Server', 6, { field: 'status_label', label: 'Situação' }),
+  table: table('soc-wu-table', 'Situação por servidor — atualização de segurança do Windows', 'soc-windows-updates', WU, [
+    ['host.name', 'Servidor', 200], ['windows.product', 'Windows Server', 1], ['windows.build', 'Build', 1],
+    ['update.latest_kb', 'Última atualização de segurança disponível', 1], ['update.installed_kb', 'Atualização refletida na build atual', 1],
+    ['update.pending_kb', 'Atualização pendente (cumulativa)', 1], ['update.reboot_required_label', 'Pode exigir reinicialização', 1],
+    ['status_label', 'Situação', 1],
+  ], [['rel', col.max('update.latest_release_date', 'Lançamento Microsoft', 'date')],
+    ['days', col.max('update.days_since_latest_release', 'Dias desde o lançamento (pendentes)')],
+    ['older', col.max('update.pending_superseded_count', 'Atualizações anteriores substituídas')],
+    ['seen', col.max('collection.collected_at', 'Última coleta', 'date')]]),
+  trend: timeline('soc-wu-trend', 'Histórico diário — servidores por situação', 'soc-windows-updates-history', WU, 'status_label', 'Situação', 4),
+};
+wu.table.attributes.state.datasourceStates.formBased.layers[LAYER].columns.m.label = 'Documentos (1 por servidor)';
+wu.trend.attributes.state.datasourceStates.formBased.layers[LAYER].columns.m.label = 'Servidores';
+const wuSearch = search('soc-search-windows-updates', 'Detalhe por servidor — motivo, evidências do Defender e datas de coleta', 'soc-windows-updates', WU,
+  ['host.name', 'windows.product', 'windows.version', 'status_label', 'status_reason', 'update.latest_kb', 'update.latest_release_date',
+    'update.installed_kb', 'update.installed_match', 'update.pending_kb', 'update.reboot_required_label',
+    'update.defender_recommended_kbs', 'collection.device_last_seen', 'collection.build_snapshot_at', 'collection.catalog_updated_at', 'collection.collected_at']);
+wuSearch.attributes.sort = [['host.name', 'asc']];
+detailSearches.push(wuSearch);
+
 const lensObjects = [...Object.values(ov), ...Object.values(ac), ...Object.values(srv), ...Object.values(asr), ...Object.values(cap),
-  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv), ...Object.values(rem)];
+  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv), ...Object.values(rem), ...Object.values(wu)];
 const dashboards = [
   dashboard('soc-dashboard-overview', 'SOC - Visão operacional', known, [
     [nav(), 0, 0, 48, 5], [markdown(`**${known}** Os incidentes/alertas Defender abrangem o tenant; o escopo de servidores é aplicado aos eventos e ao inventário. Alertas Elastic são detecções executadas neste espaço SOC e obedecem ao período selecionado.`), 0, 5, 48, 5],
@@ -826,6 +861,26 @@ dashboards.push(dashboard('soc-dashboard-remediacao', 'SOC - Remediação',
     [rem.queue, 0, 37, 48, 22], [rem.gpo, 0, 59, 48, 16], [rem.investigation, 0, 75, 48, 16],
     [remediationSearch, 0, 91, 48, 24],
   ], 'now-24h'));
+
+dashboards.push(dashboard('soc-dashboard-windows-updates', 'SOC - Atualização do Windows',
+  'Atualização de segurança do Windows nos servidores SRV* (Windows Server), com dados do Defender e do catálogo de segurança da Microsoft.', [
+    [nav(), 0, 0, 48, 5],
+    [markdown('**Escopo:** servidores cujo nome começa com SRV e com Windows Server. Só atualizações de segurança do sistema operacional, a partir do ' +
+      'Security Update Guide da Microsoft; previews opcionais não tornam o servidor pendente. Cada servidor é comparado com a atualização da **própria build** ' +
+      '(14393 = 2016, 17763 = 2019, 20348 = 2022). As atualizações são **cumulativas**: a pendente substitui as anteriores.\n\n' +
+      '**Atualização refletida na build atual** é o KB cuja build corresponde à do servidor segundo o Defender; não é o histórico de instalação. ' +
+      '**Pode exigir reinicialização** é a informação da Microsoft sobre a atualização pendente; não indica que o servidor está com reinicialização pendente. ' +
+      'Sem prazo de implantação definido, a situação é só **em dia** ou **pendente**. Data de instalação, reinicialização pendente e última inicialização ' +
+      'não são fornecidas pelo Defender e não aparecem aqui. Horários em America/Sao_Paulo.'), 0, 5, 48, 8],
+    [wu.total, 0, 13, 10, 8], [wu.ok, 10, 13, 10, 8], [wu.pending, 20, 13, 10, 8], [wu.unknown, 30, 13, 9, 8], [wu.stale, 39, 13, 9, 8],
+    [wu.status, 0, 21, 16, 14], [wu.version, 16, 21, 32, 14],
+    [wu.table, 0, 35, 48, 24],
+    [wuSearch, 0, 59, 48, 22],
+    [wu.trend, 0, 81, 48, 14],
+  ], 'now-30d', [
+    ['host.name', 'Servidor', 'soc-windows-updates'], ['windows.product', 'Windows Server', 'soc-windows-updates'],
+    ['status_label', 'Situação', 'soc-windows-updates'],
+  ]));
 
 // Regras de detecção ---------------------------------------------------------------------
 

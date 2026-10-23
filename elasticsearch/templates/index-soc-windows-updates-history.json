@@ -1,0 +1,20 @@
+{
+  "index_patterns": [
+    "soc-windows-updates-history-*"
+  ],
+  "priority": 210,
+  "composed_of": [
+    "soc-windows-updates-mappings"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "30s",
+      "index.lifecycle.name": "soc-history-retention"
+    }
+  },
+  "_meta": {
+    "description": "Foto diária do estado de atualização do Windows (ID DeviceId|dia)."
+  }
+}

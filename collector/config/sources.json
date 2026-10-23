@@ -92,6 +92,20 @@
       "partitions": 2
     },
     {
+      "name": "msrc.windows-server",
+      "type": "msrc",
+      "enabled": true,
+      "intervalSeconds": 43200,
+      "products": ["Windows Server 2016", "Windows Server 2019", "Windows Server 2022", "Windows Server 2025"]
+    },
+    {
+      "name": "windows.updates",
+      "type": "winupdates",
+      "enabled": true,
+      "intervalSeconds": 3600,
+      "namePrefix": "srv"
+    },
+    {
       "name": "insights.remediation",
       "type": "insights",
       "enabled": true,

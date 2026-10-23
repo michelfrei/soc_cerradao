@@ -39,8 +39,8 @@ test('all saved-object IDs and references resolve, including dashboard panel ref
   }
 });
 
-test('nine dashboards have valid nonoverlapping panel layouts', () => {
-  assert.equal(dashboards.length, 9);
+test('ten dashboards have valid nonoverlapping panel layouts', () => {
+  assert.equal(dashboards.length, 10);
   for (const d of dashboards) {
     const panels = JSON.parse(d.attributes.panelsJSON);
     for (const [i, p] of panels.entries()) {
@@ -256,4 +256,18 @@ test('remediation dashboard reads soc-insights without time cut and never sums d
   }
   const nav = JSON.parse(get('soc-dashboard-overview').attributes.panelsJSON)[0].embeddableConfig.savedVis.params.markdown;
   assert.match(nav, /soc-dashboard-remediacao/);
+});
+
+test('windows update dashboard is scoped to SRV* on its own timeless data view, with controls on that view', () => {
+  assert.equal(get('soc-windows-updates').attributes.timeFieldName, undefined);
+  assert.equal(get('soc-windows-updates-history').attributes.timeFieldName, '@timestamp');
+  for (const o of lenses.filter((o) => o.id.startsWith('soc-wu-'))) {
+    assert.match(o.attributes.state.query.query, /host\.name : srv\*/, o.id);
+    assert.ok(['soc-windows-updates', 'soc-windows-updates-history'].includes(o.references[0].id), o.id);
+    for (const c of columns(o)) assert.notEqual(c.operationType, 'sum', o.id);
+  }
+  const d = get('soc-dashboard-windows-updates');
+  for (const r of d.references.filter((r) => r.name.startsWith('controlGroup_'))) assert.equal(r.id, 'soc-windows-updates');
+  const text = JSON.stringify(d.attributes.panelsJSON);
+  assert.match(text, /não indica que o servidor está com reinicialização pendente/);
 });

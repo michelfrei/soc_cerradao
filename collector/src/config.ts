@@ -87,6 +87,28 @@ const InsightsSource = BaseSource.extend({
   softwareInventorySource: z.string().nullable().default('snapshot.devicetvmsoftwareinventory'),
 });
 
+// Catálogo de segurança do Windows Server (Security Update Guide, MSRC). Sem credencial.
+const MsrcSource = BaseSource.extend({
+  type: z.literal('msrc'),
+  intervalSeconds: z.number().int().min(3600).default(43200),
+  baseUrl: z.string().url().default('https://api.msrc.microsoft.com/sug/v2.0/en-US/affectedProduct'),
+  products: z.array(z.string().regex(/^Windows Server [0-9A-Za-z ,.()-]+$/)).min(1),
+  pageSize: z.number().int().min(50).max(1000).default(500),
+  maxPages: z.number().int().min(1).max(500).default(100),
+  requestTimeoutMs: z.number().int().min(5_000).default(120_000),
+});
+
+// Estado de atualização do Windows por servidor (Defender + catálogo MSRC).
+const WinUpdatesSource = BaseSource.extend({
+  type: z.literal('winupdates'),
+  intervalSeconds: z.number().int().min(300).default(3600),
+  namePrefix: z.string().min(1).default('srv'),
+  msrcSource: z.string().default('msrc.windows-server'),
+  deviceStaleHours: z.number().int().min(1).default(24),
+  snapshotStaleHours: z.number().int().min(1).default(36),
+  catalogStaleHours: z.number().int().min(1).default(48),
+});
+
 const ExpectedAsset = z.object({
   name: z.string().trim().min(1),
   id: z.string().trim().min(1).optional(),
@@ -112,7 +134,7 @@ export function parseAssets(raw: unknown): ExpectedAssetConfig[] {
 }
 
 const SourcesFile = z.object({
-  sources: z.array(z.discriminatedUnion('type', [ObjectSource, HuntingSource, InventorySource, SnapshotSource, InsightsSource])),
+  sources: z.array(z.discriminatedUnion('type', [ObjectSource, HuntingSource, InventorySource, SnapshotSource, InsightsSource, MsrcSource, WinUpdatesSource])),
 });
 
 export type ObjectSourceConfig = z.infer<typeof ObjectSource>;
@@ -120,7 +142,10 @@ export type HuntingSourceConfig = z.infer<typeof HuntingSource> & { query: strin
 export type InventorySourceConfig = z.infer<typeof InventorySource> & { query: string };
 export type SnapshotSourceConfig = z.infer<typeof SnapshotSource> & { query: string };
 export type InsightsSourceConfig = z.infer<typeof InsightsSource>;
-export type SourceConfig = ObjectSourceConfig | HuntingSourceConfig | InventorySourceConfig | SnapshotSourceConfig | InsightsSourceConfig;
+export type MsrcSourceConfig = z.infer<typeof MsrcSource>;
+export type WinUpdatesSourceConfig = z.infer<typeof WinUpdatesSource>;
+export type SourceConfig = ObjectSourceConfig | HuntingSourceConfig | InventorySourceConfig | SnapshotSourceConfig | InsightsSourceConfig
+  | MsrcSourceConfig | WinUpdatesSourceConfig;
 
 export type GraphCredential =
   | { kind: 'secret'; clientSecret: string }
@@ -199,6 +224,11 @@ export function parseSources(raw: unknown, readQuery: (file: string) => string):
       [s.configurationSource, 'DeviceTvmSecureConfigurationAssessment'], [s.softwareInventorySource, 'DeviceTvmSoftwareInventory']];
     for (const [ref, table] of refs) {
       if (ref !== null && snapshotOf.get(ref) !== table) throw new Error(`${s.name}: ${ref} não é snapshot declarado de ${table}`);
+    }
+  }
+  for (const s of parsed.sources) {
+    if (s.type === 'winupdates' && !parsed.sources.some((o) => o.type === 'msrc' && o.name === s.msrcSource)) {
+      throw new Error(`${s.name}: ${s.msrcSource} não é fonte msrc declarada`);
     }
   }
   return parsed.sources.map((s) => {

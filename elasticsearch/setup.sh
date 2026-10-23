@@ -179,12 +179,21 @@ INSIGHTS_MAPPINGS="$SETUP/mappings/soc-insights-mappings.json"
 { printf '{"template":{"mappings":'; cat "$INSIGHTS_MAPPINGS"; printf '}}'; } > "$tmp"
 es PUT /_component_template/soc-insights-mappings --data-binary @"$tmp" >/dev/null
 
+echo "Component template: soc-windows-updates-mappings"
+WINUPDATES_MAPPINGS="$SETUP/mappings/soc-windows-updates-mappings.json"
+{ printf '{"template":{"mappings":'; cat "$WINUPDATES_MAPPINGS"; printf '}}'; } > "$tmp"
+es PUT /_component_template/soc-windows-updates-mappings --data-binary @"$tmp" >/dev/null
+
 # Índices já existentes recebem os campos novos (somente inclusão; o ES recusa
 # mudança de tipo). Documentos antigos só ganham os campos novos se republicados.
-# soc-insights tem mapeamento próprio (contrato de insights) e fica de fora.
-if es GET '/_cat/indices/soc-*,-soc-insights?h=index' 2>/dev/null | grep -q .; then
+# soc-insights e soc-windows-updates* têm mapeamento próprio e ficam de fora.
+if es GET '/_cat/indices/soc-*,-soc-insights,-soc-windows-updates*?h=index' 2>/dev/null | grep -q .; then
     echo "Atualizando mapeamento dos índices soc-* existentes"
-    es PUT '/soc-*,-soc-insights/_mapping' --data-binary @"$MAPPINGS" >/dev/null
+    es PUT '/soc-*,-soc-insights,-soc-windows-updates*/_mapping' --data-binary @"$MAPPINGS" >/dev/null
+fi
+if es GET '/_cat/indices/soc-windows-updates*?h=index' 2>/dev/null | grep -q .; then
+    echo "Atualizando mapeamento de soc-windows-updates*"
+    es PUT '/soc-windows-updates*/_mapping' --data-binary @"$WINUPDATES_MAPPINGS" >/dev/null
 fi
 if es GET '/_cat/indices/soc-insights?h=index' 2>/dev/null | grep -q .; then
     echo "Atualizando mapeamento de soc-insights"
@@ -202,6 +211,10 @@ done
 if ! es GET '/_cat/indices/soc-insights?h=index' 2>/dev/null | grep -q .; then
     echo "Criando índice vazio soc-insights"
     es PUT /soc-insights >/dev/null
+fi
+if ! es GET '/_cat/indices/soc-windows-updates?h=index' 2>/dev/null | grep -q .; then
+    echo "Criando índice vazio soc-windows-updates"
+    es PUT /soc-windows-updates >/dev/null
 fi
 
 echo "Setup concluído"

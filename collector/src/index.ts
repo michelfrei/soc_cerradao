@@ -10,6 +10,8 @@ import { collectObjects } from './sources/objects.js';
 import { collectInventory } from './sources/inventory.js';
 import { collectSnapshot } from './sources/snapshot.js';
 import { collectInsights } from './sources/insights.js';
+import { collectMsrc } from './sources/msrc.js';
+import { collectWinUpdates } from './sources/winupdates.js';
 import type { RemediationCatalog } from './insights/catalog.js';
 import type { ExpectedAssetConfig } from './config.js';
 import { errorMessage } from './util.js';
@@ -33,6 +35,8 @@ async function runOnce(src: SourceConfig, deps: { pool: Pool; graph: GraphClient
     else if (src.type === 'inventory') await collectInventory(src, deps, counters);
     else if (src.type === 'snapshot') await collectSnapshot(src, deps, counters);
     else if (src.type === 'insights') await collectInsights(src, deps, counters);
+    else if (src.type === 'msrc') await collectMsrc(src, deps, counters);
+    else if (src.type === 'winupdates') await collectWinUpdates(src, deps, counters);
     else await collectObjects(src, deps, counters);
     await finishRun(deps.pool, runId, counters);
     deps.log.info({ source: src.name, ms: Date.now() - started, ...counters }, 'coleta concluída');

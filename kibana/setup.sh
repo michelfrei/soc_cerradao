@@ -69,12 +69,12 @@ echo "  $(grep -o '"successCount":[0-9]*' <<<"$out")"
 
 # 2. Índices do Elastic Security ---------------------------------------------------
 # Padrões de fábrica do Security mais os índices do SOC.
-echo "Configurando índices do Elastic Security"
+echo "Configurando índices do Elastic Security e fuso America/Sao_Paulo"
 # O stdin do curl já leva as credenciais; o corpo vai por arquivo temporário.
 body="$(mktemp)"
 trap 'rm -f "$body"' EXIT
 cat > "$body" <<'EOF'
-{"changes":{"securitySolution:defaultIndex":[
+{"changes":{"dateFormat:tz":"America/Sao_Paulo","securitySolution:defaultIndex":[
   "soc-events-*",
   "apm-*-transaction*","auditbeat-*","endgame-*","filebeat-*","logs-*",
   "packetbeat-*","traces-apm*","winlogbeat-*","-*elastic-cloud-logs-*"

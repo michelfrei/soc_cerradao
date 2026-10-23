@@ -274,6 +274,25 @@ def filter(event)
     return [event]
   end
 
+  if entity == 'winupdate'
+    # Estado de atualização do Windows calculado pelo coletor (winupdates/engine.ts).
+    # state: um documento por servidor; history: foto diária com ID servidor|dia.
+    generated = present(data['@timestamp'])
+    host_id = data['host'].is_a?(Hash) ? present(data['host']['id']) : nil
+    return [] unless %w[state history].include?(dataset) && generated && host_id && present(data['schema_version'])
+    data.each { |key, value| event.set("[#{key}]", value) unless key == '@timestamp' || value.nil? }
+    event.remove('defender')
+    event.set('[event][kind]', 'state')
+    event.set('[event][module]', 'soc')
+    event.set('[event][dataset]', "soc.windows_updates_#{dataset}")
+    event.set('[event][ingested]', LogStash::Timestamp.now)
+    generated_time = Time.iso8601(generated)
+    event.set('[@metadata][doc_id]', dataset == 'state' ? host_id : "#{host_id}|#{generated_time.utc.strftime('%Y-%m-%d')}")
+    event.set('[@metadata][index]', dataset == 'state' ? 'soc-windows-updates' : "soc-windows-updates-history-#{generated_time.utc.strftime('%Y.%m')}")
+    event.set('[@metadata][version]', (generated_time.to_r * 1000).to_i.to_s)
+    return [event]
+  end
+
   if entity == 'insight'
     # Documento já estruturado pelo coletor (insights/engine.ts); só valida o contrato
     # mínimo e o leva à raiz. Versão externa evita regressão por execução antiga.
@@ -770,5 +789,23 @@ test 'colunas nulas do Graph ({}) não viram campos numéricos, keyword ou data'
   end
   expect('processo sem data de criação não recebe objeto em process.start') do |events|
     events[1].get('[process][pid]') == 10 && events[1].get('[process][start]').nil?
+  end
+end
+
+test 'estado de atualização do Windows: atual por servidor e histórico diário' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    doc = { '@timestamp' => '2026-10-23T12:00:00.000Z', 'schema_version' => '1.0', 'host' => { 'id' => 'd1', 'name' => 'srv01' },
+      'windows' => { 'build' => '20348.4405' }, 'update' => { 'latest_kb' => 'KB5126655', 'reboot_required' => nil }, 'status' => 'pendente' }
+    [ { 'soc' => { 'entity' => 'winupdate', 'dataset' => 'state' }, 'defender' => doc },
+      { 'soc' => { 'entity' => 'winupdate', 'dataset' => 'history' }, 'defender' => doc },
+      { 'soc' => { 'entity' => 'winupdate', 'dataset' => 'state' }, 'defender' => { 'status' => 'x' } } ]
+  end
+  expect('índices, IDs e versão estáveis; inválido descartado') do |events|
+    events.length == 2 &&
+      events[0].get('[@metadata][index]') == 'soc-windows-updates' && events[0].get('[@metadata][doc_id]') == 'd1' &&
+      events[1].get('[@metadata][index]') == 'soc-windows-updates-history-2026.10' && events[1].get('[@metadata][doc_id]') == 'd1|2026-10-23' &&
+      events[0].get('[@metadata][version]') == '1792756800000' && events[0].get('[update][latest_kb]') == 'KB5126655' &&
+      events[0].get('[update][reboot_required]').nil? && events[0].get('defender').nil?
   end
 end

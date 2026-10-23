@@ -26,12 +26,15 @@ PostgreSQL → Logstash → Elasticsearch / Kibana (Elastic Security).
   de classificação. [Contrato de identidades](docs/IDENTIDADES.md).
 - Postura: snapshots TVM de vulnerabilidades e avaliações de configuração a cada
   seis horas; estado atual separado dos eventos, sem apagar resultados por falha.
-- Kibana: espaço `soc`, nove dashboards, oito regras v2 em observação e perfis
+- Kibana: espaço `soc`, dez dashboards, oito regras v2 em observação e perfis
   observer/analyst/admin. [Guia das telas](docs/DASHBOARDS.md).
 - Remediação: a postura TVM é agrupada pela ação que a resolve (atualização do
   Windows/aplicativo, GPO validada, substituição de software sem suporte ou
   investigação) e publicada em `soc-insights`, com prioridade, evidências,
   validação e reversão. [Insights de remediação](docs/INSIGHTS-REMEDIACAO.md).
+- Atualização do Windows: servidores SRV* com Windows Server comparados com a
+  atualização de segurança da própria build (Defender + Security Update Guide da
+  Microsoft). [Atualização do Windows](docs/ATUALIZACAO-WINDOWS.md).
 - Capacidade: snapshots PostgreSQL/Elasticsearch; relatório manual da VM em
   `bash scripts/capacity-report.sh docker` ou `postgres`.
 - Ainda não incluídos: backup automatizado, Grafana, CI, exportação detalhada da

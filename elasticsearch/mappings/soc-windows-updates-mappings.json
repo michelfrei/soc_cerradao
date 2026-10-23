@@ -1,0 +1,153 @@
+{
+  "dynamic": false,
+  "properties": {
+    "@timestamp": {
+      "type": "date"
+    },
+    "schema_version": {
+      "type": "keyword"
+    },
+    "host": {
+      "properties": {
+        "id": {
+          "type": "keyword"
+        },
+        "name": {
+          "type": "keyword"
+        }
+      }
+    },
+    "windows": {
+      "properties": {
+        "product": {
+          "type": "keyword"
+        },
+        "os_platform": {
+          "type": "keyword"
+        },
+        "version": {
+          "type": "keyword"
+        },
+        "build": {
+          "type": "keyword"
+        },
+        "build_major": {
+          "type": "integer"
+        },
+        "ubr": {
+          "type": "integer"
+        }
+      }
+    },
+    "update": {
+      "properties": {
+        "latest_kb": {
+          "type": "keyword"
+        },
+        "latest_release_date": {
+          "type": "date"
+        },
+        "latest_fixed_build": {
+          "type": "keyword"
+        },
+        "latest_url": {
+          "type": "keyword"
+        },
+        "installed_kb": {
+          "type": "keyword"
+        },
+        "installed_release_date": {
+          "type": "date"
+        },
+        "installed_match": {
+          "type": "keyword"
+        },
+        "pending": {
+          "type": "boolean"
+        },
+        "pending_kb": {
+          "type": "keyword"
+        },
+        "pending_superseded_count": {
+          "type": "integer"
+        },
+        "reboot_required": {
+          "type": "boolean"
+        },
+        "reboot_required_label": {
+          "type": "keyword"
+        },
+        "days_since_latest_release": {
+          "type": "integer"
+        },
+        "defender_recommended_kbs": {
+          "type": "keyword"
+        }
+      }
+    },
+    "status": {
+      "type": "keyword"
+    },
+    "status_label": {
+      "type": "keyword"
+    },
+    "status_reason": {
+      "type": "text"
+    },
+    "collection": {
+      "properties": {
+        "device_last_seen": {
+          "type": "date"
+        },
+        "build_snapshot_at": {
+          "type": "date"
+        },
+        "catalog_updated_at": {
+          "type": "date"
+        },
+        "collected_at": {
+          "type": "date"
+        }
+      }
+    },
+    "event": {
+      "properties": {
+        "kind": {
+          "type": "keyword"
+        },
+        "module": {
+          "type": "keyword"
+        },
+        "dataset": {
+          "type": "keyword"
+        },
+        "ingested": {
+          "type": "date"
+        }
+      }
+    },
+    "ecs": {
+      "properties": {
+        "version": {
+          "type": "keyword"
+        }
+      }
+    },
+    "soc": {
+      "properties": {
+        "publication_id": {
+          "type": "long"
+        },
+        "txid": {
+          "type": "long"
+        },
+        "entity": {
+          "type": "keyword"
+        },
+        "dataset": {
+          "type": "keyword"
+        }
+      }
+    }
+  }
+}

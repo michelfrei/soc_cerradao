@@ -113,7 +113,7 @@ describe('parseSources', () => {
       'hunting.deviceprocessevents', 'hunting.devicenetworkevents',
       'reconcile.deviceprocessevents', 'reconcile.devicenetworkevents',
       'snapshot.devicetvmsoftwarevulnerabilities', 'snapshot.devicetvmsecureconfigurationassessment',
-      'snapshot.devicetvmsoftwareinventory', 'insights.remediation',
+      'snapshot.devicetvmsoftwareinventory', 'msrc.windows-server', 'windows.updates', 'insights.remediation',
       'inventory.deviceinfo', 'incidents', 'alerts', 'hunting.devicelogonevents', 'hunting.asr', 'reconcile.devicelogonevents', 'reconcile.asr',
     ]);
   });
