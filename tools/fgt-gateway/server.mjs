@@ -114,7 +114,21 @@ export function createGateway(cfg, run = runSsh) {
   });
 }
 
-if (process.argv[1]?.endsWith('server.mjs')) {
+/** Autoteste sob a conta do serviço: um get system status com BatchMode, sem a saída completa. */
+export async function selfTest(cfg, run = runSsh) {
+  const r = await run(cfg, 'get system status');
+  const field = (name) => new RegExp(`^${name}\\s*:\\s*(.+)$`, 'mi').exec(r.output)?.[1]?.trim() ?? null;
+  return { ts: new Date().toISOString(), ok: r.exitCode === 0 && !r.truncated && !!field('Hostname'), exitCode: r.exitCode,
+    error: r.exitCode === 0 ? null : sshError(r.stderr), hostname: field('Hostname'), version: field('Version'), ms: r.ms };
+}
+
+if (process.argv[1]?.endsWith('server.mjs') && process.argv[2] === '--selftest') {
+  const cfg = loadConfig(process.argv[3] ?? 'gateway.json');
+  const result = await selfTest(cfg);
+  appendFileSync(join(cfg.auditDir, 'selftest.jsonl'), `${JSON.stringify(result)}\n`);
+  console.log(JSON.stringify(result));
+  process.exit(result.ok ? 0 : 1);
+} else if (process.argv[1]?.endsWith('server.mjs')) {
   const cfg = loadConfig(process.argv[2] ?? 'gateway.json');
   createGateway(cfg).listen(cfg.listenPort, cfg.listenHost, () => {
     console.log(`fgt-gateway ouvindo em https://${cfg.listenHost}:${cfg.listenPort}`);

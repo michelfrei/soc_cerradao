@@ -4,9 +4,12 @@ Cria: conta local svc_fgtgw (sem logon interativo/RDP), C:\ProgramData\fgt-gatew
 chave SSH própria sem frase (só svc_fgtgw lê), known_hosts fixado, CA + certificados mTLS,
 regra de firewall restrita e tarefa agendada que inicia o serviço no boot.
 Não exibe nem grava senhas no console. Reexecutar com -Reissue recria certificados e senha da conta.
+-SelfTestOnly: depois de cadastrar a chave no FortiGate, roda "get system status" com BatchMode=yes
+como svc_fgtgw (tarefa temporária) e mostra só o resultado.
 
-Exemplo:
-  powershell -ExecutionPolicy Bypass -File .\install-server.ps1 -ClientName acalixto
+Exemplos:
+  powershell -ExecutionPolicy Bypass -File .\install-server.ps1 -ClientName acalixto -SshPath 'C:\Program Files\Git\usr\bin\ssh.exe'
+  powershell -ExecutionPolicy Bypass -File .\install-server.ps1 -SelfTestOnly
 #>
 param(
   [string]$ClientName = $env:USERNAME,
@@ -17,7 +20,9 @@ param(
   [int]$FortiGatePort = 40022,
   [string]$FortiGateUser = 'claude',
   [string]$TrustedKnownHosts = 'C:\Users\administrator\.ssh\known_hosts',
-  [switch]$Reissue
+  [string]$SshPath = '',
+  [switch]$Reissue,
+  [switch]$SelfTestOnly
 )
 $ErrorActionPreference = 'Stop'
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -33,8 +38,14 @@ function Find-Tool([string]$name, [string[]]$candidates) {
   if ($cmd) { return $cmd.Source }
   return $null
 }
-$ssh = Find-Tool 'ssh.exe' @((Join-Path $env:WINDIR 'System32\OpenSSH\ssh.exe'), 'C:\Program Files\OpenSSH\ssh.exe', 'C:\Program Files\OpenSSH-Win64\ssh.exe')
-if (-not $ssh) { throw 'ssh.exe não encontrado (instale o OpenSSH para Windows).' }
+if ($SshPath) {
+  if (-not (Test-Path $SshPath)) { throw "SshPath inexistente: $SshPath" }
+  $ssh = (Resolve-Path $SshPath).Path
+} else {
+  $ssh = Find-Tool 'ssh.exe' @((Join-Path $env:WINDIR 'System32\OpenSSH\ssh.exe'), 'C:\Program Files\OpenSSH\ssh.exe',
+    'C:\Program Files\OpenSSH-Win64\ssh.exe', 'C:\Program Files\Git\usr\bin\ssh.exe')
+}
+if (-not $ssh) { throw 'ssh.exe não encontrado (informe -SshPath).' }
 $keygen = Join-Path (Split-Path $ssh) 'ssh-keygen.exe'
 if (-not (Test-Path $keygen)) { throw "ssh-keygen.exe não encontrado ao lado de $ssh." }
 # OpenSSL: o do Git for Windows basta; gera os certificados em PEM, sem depender do cofre do Windows.
@@ -48,6 +59,45 @@ $dirs = @{ bin = "$root\bin"; conf = "$root\conf"; keys = "$root\keys"; pki = "$
 function New-RandomSecret([int]$bytes = 32) {
   $b = New-Object byte[] $bytes; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
   return [Convert]::ToBase64String($b).TrimEnd('=').Replace('+', 'A').Replace('/', 'B')
+}
+
+$task = 'fgt-gateway'
+$selfTask = 'fgt-gateway-selftest'
+function Register-Service([string]$password) {
+  $action = New-ScheduledTaskAction -Execute $node -Argument "`"$($dirs.bin)\server.mjs`" `"$($dirs.conf)\gateway.json`"" -WorkingDirectory $dirs.bin
+  $trigger = New-ScheduledTaskTrigger -AtStartup
+  $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable
+  Register-ScheduledTask -TaskName $task -Action $action -Trigger $trigger -Settings $settings -User "$env:COMPUTERNAME\$svc" -Password $password -RunLevel Limited -Force | Out-Null
+}
+# Executa "get system status" com BatchMode=yes como svc_fgtgw e mostra só o resumo (sem a saída do FortiGate).
+function Invoke-SelfTest([string]$password) {
+  $log = "$($dirs.logs)\selftest.jsonl"
+  $before = if (Test-Path $log) { (Get-Content $log).Count } else { 0 }
+  $action = New-ScheduledTaskAction -Execute $node -Argument "`"$($dirs.bin)\server.mjs`" --selftest `"$($dirs.conf)\gateway.json`"" -WorkingDirectory $dirs.bin
+  Register-ScheduledTask -TaskName $selfTask -Action $action -User "$env:COMPUTERNAME\$svc" -Password $password -RunLevel Limited -Force | Out-Null
+  Start-ScheduledTask -TaskName $selfTask
+  $deadline = (Get-Date).AddSeconds(90)
+  do { Start-Sleep -Seconds 2; $lines = if (Test-Path $log) { @(Get-Content $log) } else { @() } } while ($lines.Count -le $before -and (Get-Date) -lt $deadline)
+  Unregister-ScheduledTask -TaskName $selfTask -Confirm:$false
+  if ($lines.Count -le $before) { Write-Host '   Autoteste sem resultado em 90 s (veja o Visualizador de Eventos > Agendador de Tarefas).'; return $false }
+  $r = $lines[-1] | ConvertFrom-Json
+  Write-Host "   Conta: $env:COMPUTERNAME\$svc | ok=$($r.ok) | exit=$($r.exitCode) | hostname=$($r.hostname) | versão=$($r.version) | erro=$($r.error)"
+  return [bool]$r.ok
+}
+
+if ($SelfTestOnly) {
+  if (-not (Test-Path "$($dirs.conf)\gateway.json")) { throw 'Instalação não encontrada; rode sem -SelfTestOnly primeiro.' }
+  # A senha da conta não é guardada: gera outra e reaplica na tarefa principal antes do autoteste.
+  $pw = New-RandomSecret 32
+  Set-LocalUser -Name $svc -Password (ConvertTo-SecureString $pw -AsPlainText -Force)
+  Register-Service $pw
+  Write-Host 'Autoteste SSH (BatchMode=yes) como svc_fgtgw:'
+  $ok = Invoke-SelfTest $pw
+  $pw = $null
+  Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+  Start-ScheduledTask -TaskName $task
+  if (-not $ok) { exit 1 }
+  exit 0
 }
 
 Write-Host '1/8 Conta de serviço'
@@ -158,17 +208,16 @@ New-NetFirewallRule -DisplayName 'fgt-gateway (mTLS)' -Direction Inbound -Protoc
   -Action Allow -Profile Any | Out-Null
 
 Write-Host '8/8 Tarefa agendada (inicia no boot como svc_fgtgw)'
-$action = New-ScheduledTaskAction -Execute $node -Argument "`"$($dirs.bin)\server.mjs`" `"$($dirs.conf)\gateway.json`"" -WorkingDirectory $dirs.bin
-$trigger = New-ScheduledTaskTrigger -AtStartup
-$settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable
-Register-ScheduledTask -TaskName 'fgt-gateway' -Action $action -Trigger $trigger -Settings $settings -User "$env:COMPUTERNAME\$svc" -Password $pw -RunLevel Limited -Force | Out-Null
+Register-Service $pw
 $pw = $null; $secure = $null
-Stop-ScheduledTask -TaskName 'fgt-gateway' -ErrorAction SilentlyContinue
-Start-ScheduledTask -TaskName 'fgt-gateway'
+Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+Start-ScheduledTask -TaskName $task
 
 Write-Host ''
 Write-Host '=== Pronto ==='
-Write-Host 'A) Cadastre esta chave pública no usuário claude do FortiGate (ssh-public-key2):'
+Write-Host 'A) Cadastre esta chave pública numa posição LIVRE (ssh-public-key1..3) do usuário claude no FortiGate,'
+Write-Host '   sem substituir a chave atual:'
 Write-Host "   $(Get-Content "$key.pub")"
-Write-Host "   e inclua $ServerIp nos trusted hosts do usuário claude (ex.: trusthost2)."
-Write-Host "B) Copie a pasta $($dirs.bundle) para o notebook (install-client.ps1) e depois apague-a deste servidor."
+Write-Host "   Confirme que $ServerIp está num trusthost do usuário claude."
+Write-Host 'B) Depois rode: install-server.ps1 -SelfTestOnly  (SSH com BatchMode=yes como svc_fgtgw).'
+Write-Host "C) Copie a pasta $($dirs.bundle) para o notebook (install-client.ps1) e depois apague-a deste servidor."

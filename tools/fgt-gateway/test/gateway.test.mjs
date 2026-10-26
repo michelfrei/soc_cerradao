@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isSecretAttribute, redact, resolveCommand } from '../lib/commands.mjs';
-import { createGateway, sshArgs } from '../server.mjs';
+import { createGateway, selfTest, sshArgs } from '../server.mjs';
 import { callGateway, handle, toolList } from '../mcp.mjs';
 
 test('lista fechada: só ferramentas conhecidas e id inteiro', () => {
@@ -102,3 +102,13 @@ test('mTLS: sem certificado ou de outra CA é recusado; comando fora da lista ta
   assert.equal(refused.status, 400);
   assert.match(refused.body.error, /não permitida/);
 }));
+
+test('autoteste: ok só com saída do status; erro do ssh sem caminhos locais', async () => {
+  const ok = await selfTest(cfg, async () => ({ exitCode: 0, output: 'Version: FortiGate-100F v7.4.11\nHostname: FGT100F-CERRADAO-PRIMARY\n', stderr: '', ms: 5, truncated: false }));
+  assert.deepEqual([ok.ok, ok.hostname, ok.version], [true, 'FGT100F-CERRADAO-PRIMARY', 'FortiGate-100F v7.4.11']);
+  const denied = await selfTest(cfg, async () => ({ exitCode: 255, output: '', stderr: 'claude@172.16.0.1: Permission denied (publickey).', ms: 5, truncated: false }));
+  assert.equal(denied.ok, false);
+  assert.equal(denied.error, 'FortiGate recusou a chave do serviço');
+  const hostkey = await selfTest(cfg, async () => ({ exitCode: 255, output: '', stderr: 'Host key verification failed.', ms: 5, truncated: false }));
+  assert.match(hostkey.error, /identidade SSH/);
+});
