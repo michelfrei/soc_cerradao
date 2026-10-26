@@ -25,22 +25,28 @@ Notebook: Claude → MCP local (mcp.mjs) ──HTTPS+mTLS:8443──► Servidor
 
 ## Instalação no servidor (Administrador)
 
-1. Instale o Node.js LTS (nodejs.org), o Git for Windows (traz o `openssl.exe`) e confirme o cliente
-   OpenSSH (`ssh -V`). Compatível com Windows Server 2016 (OpenSSH do pacote Win32-OpenSSH) e posteriores.
-2. Obtenha este repositório no servidor e rode:
+1. Instale o Node.js LTS (nodejs.org) e o Git for Windows (traz `openssl.exe` e `ssh.exe`).
+   Compatível com Windows Server 2016 e posteriores.
+2. Obtenha este repositório no servidor e rode (`-SshPath` fixa o cliente SSH do serviço):
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\tools\fgt-gateway\install-server.ps1 -ClientName acalixto
+   powershell -ExecutionPolicy Bypass -File .\tools\fgt-gateway\install-server.ps1 -ClientName acalixto -SshPath 'C:\Program Files\Git\usr\bin\ssh.exe'
    ```
-3. No FortiGate (conta com permissão sobre o usuário `claude`), cadastre a chave pública exibida no fim:
+3. No FortiGate (conta com permissão sobre o usuário `claude`), cadastre a chave pública exibida no fim
+   numa posição **livre** (`ssh-public-key1..3`), sem substituir a chave atual, e confirme que o servidor
+   está num `trusthost`:
    ```
    config system admin
        edit "claude"
-           set ssh-public-key2 "<chave pública exibida>"
-           set trusthost2 172.16.159.140 255.255.255.255
+           set ssh-public-keyN "<chave pública exibida>"
        next
    end
    ```
-4. Copie `C:\ProgramData\fgt-gateway\client-bundle` para o notebook e apague-a do servidor.
+4. Valide o SSH sem interação, como a conta do serviço (`BatchMode=yes`). Mostra só conta, `ok`, código
+   de saída, hostname e versão. Repita após reiniciar o servidor:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\tools\fgt-gateway\install-server.ps1 -SelfTestOnly
+   ```
+5. Copie `C:\ProgramData\fgt-gateway\client-bundle` para o notebook e apague-a do servidor.
 
 ## Instalação no notebook
 
