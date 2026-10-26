@@ -13,7 +13,8 @@ Notebook: Claude → MCP local (mcp.mjs) ──HTTPS+mTLS:8443──► Servidor
   e não aparece em respostas nem no log. A chave antiga com frase não é usada.
 - **Identidade do FortiGate**: `StrictHostKeyChecking=yes` com `known_hosts` próprio, copiado do
   known_hosts já validado do administrador. Identidade diferente faz a consulta falhar.
-- **Notebook ↔ servidor**: TLS 1.2+ com autenticação mútua. CA própria (não confiada pelo Windows);
+- **Notebook ↔ servidor**: TLS 1.2+ com autenticação mútua. CA própria em PEM gerada com OpenSSL (não
+  instalada como confiável no Windows; a chave da CA é apagada após emitir os certificados);
   o servidor só aceita o certificado de cliente emitido para `fgt-client-<usuário>`; o cliente só confia
   no certificado do servidor emitido por essa CA. Firewall do Windows: porta 8443 só de 172.19.12.0/22.
 - **Conta `svc_fgtgw`**: local, sem administrador, logon interativo e RDP negados, senha aleatória que
@@ -24,7 +25,8 @@ Notebook: Claude → MCP local (mcp.mjs) ──HTTPS+mTLS:8443──► Servidor
 
 ## Instalação no servidor (Administrador)
 
-1. Instale o Node.js LTS (nodejs.org) e confirme o cliente OpenSSH (`ssh -V`).
+1. Instale o Node.js LTS (nodejs.org), o Git for Windows (traz o `openssl.exe`) e confirme o cliente
+   OpenSSH (`ssh -V`). Compatível com Windows Server 2016 (OpenSSH do pacote Win32-OpenSSH) e posteriores.
 2. Obtenha este repositório no servidor e rode:
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\tools\fgt-gateway\install-server.ps1 -ClientName acalixto

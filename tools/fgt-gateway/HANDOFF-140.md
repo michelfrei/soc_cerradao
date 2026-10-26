@@ -1,6 +1,9 @@
 # Continuação no servidor 172.16.159.140 — implantação do fgt-gateway
 
-Prompt para o Claude que roda **no servidor 172.16.159.140**. Leia este arquivo inteiro antes de agir.
+Roteiro de implantação no **servidor 172.16.159.140** (Windows Server 2016, build 14393).
+O Claude Desktop não instala nessa versão: as etapas são executadas pelo usuário no servidor, guiado
+pelo Claude do notebook. Requisitos no servidor: Node.js LTS, Git for Windows (traz `openssl.exe`) e
+cliente OpenSSH.
 
 ## Contexto
 

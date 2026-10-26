@@ -26,10 +26,21 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 $node = (Get-Command node -ErrorAction SilentlyContinue).Source
 if (-not $node) { $node = 'C:\Program Files\nodejs\node.exe' }
 if (-not (Test-Path $node)) { throw 'Node.js não encontrado. Instale o Node.js LTS (nodejs.org) e rode de novo.' }
-$ssh = Join-Path $env:WINDIR 'System32\OpenSSH\ssh.exe'
-$keygen = Join-Path $env:WINDIR 'System32\OpenSSH\ssh-keygen.exe'
-$keyscan = Join-Path $env:WINDIR 'System32\OpenSSH\ssh-keyscan.exe'
-if (-not (Test-Path $ssh)) { throw 'Cliente OpenSSH do Windows ausente (Recurso opcional "OpenSSH Client").' }
+# OpenSSH: embutido no Windows Server 2019+; no 2016 vem do pacote Win32-OpenSSH.
+function Find-Tool([string]$name, [string[]]$candidates) {
+  foreach ($c in $candidates) { if ($c -and (Test-Path $c)) { return (Resolve-Path $c).Path } }
+  $cmd = Get-Command $name -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
+  return $null
+}
+$ssh = Find-Tool 'ssh.exe' @((Join-Path $env:WINDIR 'System32\OpenSSH\ssh.exe'), 'C:\Program Files\OpenSSH\ssh.exe', 'C:\Program Files\OpenSSH-Win64\ssh.exe')
+if (-not $ssh) { throw 'ssh.exe não encontrado (instale o OpenSSH para Windows).' }
+$keygen = Join-Path (Split-Path $ssh) 'ssh-keygen.exe'
+if (-not (Test-Path $keygen)) { throw "ssh-keygen.exe não encontrado ao lado de $ssh." }
+# OpenSSL: o do Git for Windows basta; gera os certificados em PEM, sem depender do cofre do Windows.
+$openssl = Find-Tool 'openssl.exe' @('C:\Program Files\Git\usr\bin\openssl.exe', 'C:\Program Files\Git\mingw64\bin\openssl.exe', 'C:\Program Files\OpenSSL-Win64\bin\openssl.exe')
+if (-not $openssl) { throw 'openssl.exe não encontrado (instale o Git for Windows ou o OpenSSL).' }
+Write-Host "Node: $node | ssh: $ssh | openssl: $openssl"
 
 $svc = 'svc_fgtgw'
 $root = 'C:\ProgramData\fgt-gateway'
@@ -100,38 +111,42 @@ if ($trusted.Count -gt 0) {
 }
 & $keygen -l -f $kh | ForEach-Object { Write-Host "   $_" }
 
-Write-Host '5/8 Certificados (CA própria, servidor e cliente)'
-$passFile = "$($dirs.pki)\server.pass"
-if ($Reissue -or -not (Test-Path "$($dirs.pki)\server.pfx")) {
-  $store = 'Cert:\LocalMachine\My'
-  $ca = New-SelfSignedCertificate -Subject 'CN=fgt-gateway CA' -KeyUsage CertSign, CRLSign, DigitalSignature -KeyExportPolicy Exportable `
-    -TextExtension @('2.5.29.19={critical}{text}ca=1&pathlength=0') -NotAfter (Get-Date).AddYears(3) -CertStoreLocation $store -KeyAlgorithm RSA -KeyLength 3072
-  $srv = New-SelfSignedCertificate -Subject 'CN=fgt-gateway' -Signer $ca -KeyExportPolicy Exportable -NotAfter (Get-Date).AddYears(2) -CertStoreLocation $store `
-    -TextExtension @("2.5.29.17={text}IPAddress=$ServerIp&DNS=$env:COMPUTERNAME", '2.5.29.37={text}1.3.6.1.5.5.7.3.1') -KeyAlgorithm RSA -KeyLength 2048
-  $cli = New-SelfSignedCertificate -Subject "CN=fgt-client-$ClientName" -Signer $ca -KeyExportPolicy Exportable -NotAfter (Get-Date).AddYears(1) -CertStoreLocation $store `
-    -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.2') -KeyAlgorithm RSA -KeyLength 2048
-  $pem = "-----BEGIN CERTIFICATE-----`n$([Convert]::ToBase64String($ca.RawData, 'InsertLineBreaks'))`n-----END CERTIFICATE-----`n"
-  [IO.File]::WriteAllText("$($dirs.pki)\ca.pem", $pem); [IO.File]::WriteAllText("$($dirs.bundle)\ca.pem", $pem)
-  $sp = New-RandomSecret 24; $cp = New-RandomSecret 24
-  # AES-256: o Node 24 (OpenSSL 3) não lê PFX com a cifra antiga padrão (3DES/RC2).
-  $pfxOpt = @{ ChainOption = 'EndEntityCertOnly' }
-  if ((Get-Command Export-PfxCertificate).Parameters.ContainsKey('CryptoAlgorithmOption')) { $pfxOpt.CryptoAlgorithmOption = 'AES256_SHA256' }
-  else { throw 'Este Windows não exporta PFX com AES-256 (requer Windows Server 2019 ou posterior).' }
-  Export-PfxCertificate -Cert $srv -FilePath "$($dirs.pki)\server.pfx" -Password (ConvertTo-SecureString $sp -AsPlainText -Force) @pfxOpt | Out-Null
-  Export-PfxCertificate -Cert $cli -FilePath "$($dirs.bundle)\client.pfx" -Password (ConvertTo-SecureString $cp -AsPlainText -Force) @pfxOpt | Out-Null
-  [IO.File]::WriteAllText($passFile, $sp); [IO.File]::WriteAllText("$($dirs.bundle)\client.pass", $cp)
-  # Chaves privadas só ficam nos arquivos com ACL: a CA não fica no repositório de certificados.
-  foreach ($c in $ca, $srv, $cli) { Remove-Item "$store\$($c.Thumbprint)" -DeleteKey -Force }
-  $sp = $null; $cp = $null
-  @{ url = "https://${ServerIp}:$ListenPort"; caFile = 'ca.pem'; pfxFile = 'client.pfx'; passFile = 'client.pass' } |
+Write-Host '5/8 Certificados mTLS em PEM (CA própria, servidor e cliente)'
+$serverKey = "$($dirs.pki)\server.key"
+if ($Reissue -or -not (Test-Path $serverKey)) {
+  $work = Join-Path $env:TEMP ("fgtgw-pki-" + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory $work | Out-Null
+  icacls $work /inheritance:r /grant:r 'Administrators:(OI)(CI)F' 'SYSTEM:(OI)(CI)F' | Out-Null
+  # O OpenSSL escreve progresso no stderr; no PowerShell 5.1 isso não pode virar erro fatal.
+  function Invoke-OpenSsl { $ErrorActionPreference = 'Continue'; & $openssl @args 2>&1 | Out-Null; if ($LASTEXITCODE -ne 0) { throw "openssl falhou: $($args[0])" } }
+  Get-ChildItem $dirs.bundle -File -ErrorAction SilentlyContinue | Remove-Item -Force
+  Push-Location $work
+  try {
+    # CA própria (não é instalada como confiável no Windows); a chave da CA é apagada no fim.
+    Invoke-OpenSsl req -x509 -newkey rsa:3072 -nodes -keyout ca.key -out ca.pem -days 1095 -subj '/CN=fgt-gateway CA' `
+      -addext 'basicConstraints=critical,CA:TRUE,pathlen:0' -addext 'keyUsage=critical,keyCertSign,cRLSign'
+    "subjectAltName=IP:$ServerIp,DNS:$env:COMPUTERNAME`nkeyUsage=critical,digitalSignature,keyEncipherment`nextendedKeyUsage=serverAuth`n" |
+      Set-Content server.ext -Encoding ascii
+    "keyUsage=critical,digitalSignature,keyEncipherment`nextendedKeyUsage=clientAuth`n" | Set-Content client.ext -Encoding ascii
+    Invoke-OpenSsl req -new -newkey rsa:2048 -nodes -keyout server.key -out server.csr -subj '/CN=fgt-gateway'
+    Invoke-OpenSsl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 730 -out server.pem -extfile server.ext
+    Invoke-OpenSsl req -new -newkey rsa:2048 -nodes -keyout client.key -out client.csr -subj "/CN=fgt-client-$ClientName"
+    Invoke-OpenSsl x509 -req -in client.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 365 -out client.pem -extfile client.ext
+    Copy-Item ca.pem, server.pem, server.key $dirs.pki -Force
+    Copy-Item ca.pem, client.pem, client.key $dirs.bundle -Force
+  } finally {
+    Pop-Location
+    Remove-Item $work -Recurse -Force
+  }
+  @{ url = "https://${ServerIp}:$ListenPort"; caFile = 'ca.pem'; certFile = 'client.pem'; keyFile = 'client.key' } |
     ConvertTo-Json | Set-Content "$($dirs.bundle)\client.json" -Encoding ascii
 }
-icacls "$($dirs.pki)\server.pfx" /inheritance:r /grant:r 'Administrators:F' 'SYSTEM:F' "${svc}:R" | Out-Null
-icacls $passFile /inheritance:r /grant:r 'Administrators:F' 'SYSTEM:F' "${svc}:R" | Out-Null
+icacls $serverKey /inheritance:r /grant:r 'Administrators:F' 'SYSTEM:F' "${svc}:R" | Out-Null
+icacls "$($dirs.bundle)\client.key" /inheritance:r /grant:r 'Administrators:F' 'SYSTEM:F' 2>$null | Out-Null
 
 Write-Host '6/8 Configuração do serviço'
 @{
-  listenHost = '0.0.0.0'; listenPort = $ListenPort; caFile = "$($dirs.pki)\ca.pem"; serverPfxFile = "$($dirs.pki)\server.pfx"; serverPassFile = $passFile
+  listenHost = '0.0.0.0'; listenPort = $ListenPort; caFile = "$($dirs.pki)\ca.pem"; serverCertFile = "$($dirs.pki)\server.pem"; serverKeyFile = $serverKey
   allowedClients = @("fgt-client-$ClientName"); sshPath = $ssh; sshKeyFile = $key; knownHostsFile = $kh
   fortigateHost = $FortiGateHost; fortigatePort = $FortiGatePort; fortigateUser = $FortiGateUser; auditDir = $dirs.logs
   timeoutMs = 60000; maxOutputBytes = 4194304
@@ -140,7 +155,7 @@ Write-Host '6/8 Configuração do serviço'
 Write-Host '7/8 Firewall do Windows'
 Get-NetFirewallRule -DisplayName 'fgt-gateway (mTLS)' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 New-NetFirewallRule -DisplayName 'fgt-gateway (mTLS)' -Direction Inbound -Protocol TCP -LocalPort $ListenPort -RemoteAddress $AllowedRemote `
-  -Action Allow -Profile Domain, Private | Out-Null
+  -Action Allow -Profile Any | Out-Null
 
 Write-Host '8/8 Tarefa agendada (inicia no boot como svc_fgtgw)'
 $action = New-ScheduledTaskAction -Execute $node -Argument "`"$($dirs.bin)\server.mjs`" `"$($dirs.conf)\gateway.json`"" -WorkingDirectory $dirs.bin

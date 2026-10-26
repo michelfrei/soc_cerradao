@@ -10,7 +10,7 @@ import { redact, resolveCommand } from './lib/commands.mjs';
 
 export function loadConfig(path) {
   const c = JSON.parse(readFileSync(path, 'utf8'));
-  for (const k of ['listenHost', 'listenPort', 'caFile', 'serverPfxFile', 'serverPassFile', 'allowedClients', 'sshPath',
+  for (const k of ['listenHost', 'listenPort', 'caFile', 'serverCertFile', 'serverKeyFile', 'allowedClients', 'sshPath',
     'sshKeyFile', 'knownHostsFile', 'fortigateHost', 'fortigatePort', 'fortigateUser', 'auditDir']) {
     if (c[k] === undefined || c[k] === '') throw new Error(`configuração sem ${k}`);
   }
@@ -78,7 +78,7 @@ function sshError(stderr) {
 
 export function createGateway(cfg, run = runSsh) {
   const tls = {
-    pfx: readFileSync(cfg.serverPfxFile), passphrase: readFileSync(cfg.serverPassFile, 'utf8').trim(),
+    cert: readFileSync(cfg.serverCertFile), key: readFileSync(cfg.serverKeyFile),
     ca: readFileSync(cfg.caFile), requestCert: true, rejectUnauthorized: true, minVersion: 'TLSv1.2',
   };
   return createServer(tls, (req, res) => {

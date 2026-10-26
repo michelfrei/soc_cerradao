@@ -16,7 +16,7 @@ export function loadClientConfig(path = process.env.FGT_GATEWAY_CONFIG ?? join(h
   const rel = (p) => (isAbsolute(p) ? p : join(dirname(path), p));
   const url = new URL(c.url);
   if (url.protocol !== 'https:') throw new Error('url do gateway precisa ser https');
-  return { url, ca: readFileSync(rel(c.caFile)), pfx: readFileSync(rel(c.pfxFile)), passphrase: readFileSync(rel(c.passFile), 'utf8').trim(),
+  return { url, ca: readFileSync(rel(c.caFile)), cert: readFileSync(rel(c.certFile)), key: readFileSync(rel(c.keyFile)),
     timeoutMs: c.timeoutMs ?? 90_000 };
 }
 
@@ -25,7 +25,7 @@ export function callGateway(cfg, tool, args) {
     const body = JSON.stringify({ tool, args });
     const req = request({
       host: cfg.url.hostname, port: cfg.url.port || 443, path: '/v1/query', method: 'POST',
-      ca: cfg.ca, pfx: cfg.pfx, passphrase: cfg.passphrase, minVersion: 'TLSv1.2', rejectUnauthorized: true,
+      ca: cfg.ca, cert: cfg.cert, key: cfg.key, minVersion: 'TLSv1.2', rejectUnauthorized: true,
       headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }, timeout: cfg.timeoutMs,
     }, (res) => {
       let text = '';

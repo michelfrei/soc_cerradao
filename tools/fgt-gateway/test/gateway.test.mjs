@@ -61,16 +61,14 @@ function issue(name, cn, caName, ext) {
   writeFileSync(join(dir, `${name}.ext`), ext);
   ossl('req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', `${name}.key`, '-out', `${name}.csr`, '-subj', `/CN=${cn}`);
   ossl('x509', '-req', '-in', `${name}.csr`, '-CA', `${caName}.crt`, '-CAkey', `${caName}.key`, '-CAcreateserial', '-days', '2', '-out', `${name}.crt`, '-extfile', `${name}.ext`);
-  ossl('pkcs12', '-export', '-out', `${name}.pfx`, '-inkey', `${name}.key`, '-in', `${name}.crt`, '-passout', 'pass:teste');
 }
 for (const ca of ['ca', 'other']) ossl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', `${ca}.key`, '-out', `${ca}.crt`, '-days', '2', '-subj', `/CN=${ca}`);
 issue('server', 'fgt-gateway', 'ca', 'subjectAltName=IP:127.0.0.1\nextendedKeyUsage=serverAuth\n');
 issue('client', 'fgt-client-teste', 'ca', 'extendedKeyUsage=clientAuth\n');
 issue('intruso', 'fgt-client-teste', 'other', 'extendedKeyUsage=clientAuth\n');
-writeFileSync(join(dir, 'pass'), 'teste');
 
 const fakeSsh = fileURLToPath(new URL('./fake-ssh.mjs', import.meta.url));
-const cfg = { listenHost: '127.0.0.1', listenPort: 0, caFile: join(dir, 'ca.crt'), serverPfxFile: join(dir, 'server.pfx'), serverPassFile: join(dir, 'pass'),
+const cfg = { listenHost: '127.0.0.1', listenPort: 0, caFile: join(dir, 'ca.crt'), serverCertFile: join(dir, 'server.crt'), serverKeyFile: join(dir, 'server.key'),
   allowedClients: ['fgt-client-teste'], sshPath: process.execPath, sshPrefixArgs: [fakeSsh], sshKeyFile: 'C:/ProgramData/fgt-gateway/keys/fortigate_ed25519',
   knownHostsFile: 'kh', fortigateHost: '172.16.0.1', fortigatePort: 40022, fortigateUser: 'claude', auditDir: dir, timeoutMs: 10_000, maxOutputBytes: 1_000_000 };
 
@@ -80,7 +78,7 @@ async function withGateway(fn) {
   try { return await fn(server.address().port); } finally { server.close(); }
 }
 const client = (port, name = 'client') => ({ url: new URL(`https://127.0.0.1:${port}`), ca: readFileSync(join(dir, 'ca.crt')),
-  pfx: readFileSync(join(dir, `${name}.pfx`)), passphrase: 'teste', timeoutMs: 10_000 });
+  cert: readFileSync(join(dir, `${name}.crt`)), key: readFileSync(join(dir, `${name}.key`)), timeoutMs: 10_000 });
 
 test('mTLS: consulta permitida passa, saída sem segredos, auditoria sem conteúdo nem chave', () => withGateway(async (port) => {
   const r = await callGateway(client(port), 'policy', { id: 7 });
@@ -97,7 +95,7 @@ test('mTLS: consulta permitida passa, saída sem segredos, auditoria sem conteú
 }));
 
 test('mTLS: sem certificado ou de outra CA é recusado; comando fora da lista também', () => withGateway(async (port) => {
-  const noCert = { ...client(port), pfx: undefined, passphrase: undefined };
+  const noCert = { ...client(port), cert: undefined, key: undefined };
   await assert.rejects(callGateway(noCert, 'status', {}));
   await assert.rejects(callGateway(client(port, 'intruso'), 'status', {}));
   const refused = await callGateway(client(port), 'diagnose', {});

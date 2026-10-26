@@ -9,7 +9,7 @@ Exemplo:
 #>
 param([Parameter(Mandatory = $true)][string]$BundlePath)
 $ErrorActionPreference = 'Stop'
-foreach ($f in 'ca.pem', 'client.pfx', 'client.pass', 'client.json') {
+foreach ($f in 'ca.pem', 'client.pem', 'client.key', 'client.json') {
   if (-not (Test-Path (Join-Path $BundlePath $f))) { throw "Arquivo ausente no pacote: $f" }
 }
 $dest = Join-Path $env:USERPROFILE '.fgt-gateway'
