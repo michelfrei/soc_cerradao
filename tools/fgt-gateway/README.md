@@ -1,7 +1,7 @@
 # fgt-gateway — consultas somente leitura ao FortiGate pelo Claude
 
 ```
-Notebook: Claude → MCP local (mcp.mjs) ──HTTPS+mTLS:8443──► Servidor 172.16.159.196: fgt-gateway (server.mjs, conta svc_fgtgw)
+Notebook: Claude → MCP local (mcp.mjs) ──HTTPS+mTLS:8443──► Servidor 172.16.159.140: fgt-gateway (server.mjs, conta svc_fgtgw)
                                                               └─ ssh.exe (chave e known_hosts locais) ──► FortiGate 172.16.0.1:40022 (claude / soc_readonly)
 ```
 
@@ -34,7 +34,7 @@ Notebook: Claude → MCP local (mcp.mjs) ──HTTPS+mTLS:8443──► Servidor
    config system admin
        edit "claude"
            set ssh-public-key2 "<chave pública exibida>"
-           set trusthost2 172.16.159.196 255.255.255.255
+           set trusthost2 172.16.159.140 255.255.255.255
        next
    end
    ```

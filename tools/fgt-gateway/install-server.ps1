@@ -10,7 +10,7 @@ Exemplo:
 #>
 param(
   [string]$ClientName = $env:USERNAME,
-  [string]$ServerIp = '172.16.159.196',
+  [string]$ServerIp = '172.16.159.140',
   [int]$ListenPort = 8443,
   [string[]]$AllowedRemote = @('172.19.12.0/22'),
   [string]$FortiGateHost = '172.16.0.1',
