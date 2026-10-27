@@ -117,8 +117,8 @@ describe('parseSources', () => {
       'inventory.deviceinfo', 'incidents', 'alerts', 'hunting.devicelogonevents', 'hunting.asr', 'reconcile.devicelogonevents', 'reconcile.asr',
       'fwflows.fortigate', 'fwsessions.fortigate',
     ]);
-    // Agregados da firewall só ligam depois do usuário de leitura no Elasticsearch.
-    expect(sources.find((s) => s.name === 'fwflows.fortigate')?.enabled).toBe(false);
+    // Fontes da firewall ligadas: exigem ES_URL/ES_PASSWORD_FILE (usuário soc_collector_es).
+    for (const name of ['fwflows.fortigate', 'fwsessions.fortigate']) expect(sources.find((s) => s.name === name)?.enabled).toBe(true);
   });
 
   it('exige os marcadores de período na consulta', () => {

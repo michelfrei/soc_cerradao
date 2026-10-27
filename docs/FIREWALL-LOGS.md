@@ -206,11 +206,11 @@ importada no FAZ) é opcional. A CA está em `docker` → volume `certs_public` 
 - Se o relay mostrar o IP do gateway Docker em vez do IP do FAZ, o `userland-proxy` está
   escondendo a origem. Coloque esse IP em `FW_SYSLOG_ALLOWED` provisoriamente e avise.
 
-## 6. Ligar os agregados (coletor)
+## 6. Agregados por hora (coletor)
 
-Com logs chegando há pelo menos 1 hora, em `collector/config/sources.json` troque
-`"enabled": false` por `true` na fonte `fwflows.fortigate`. Ajuste `serverCidrs` se houver
-outras redes de servidores. Depois reinicie o coletor:
+A fonte `fwflows.fortigate` já vem ligada (desde 27/10/2026) e roda vazia até os logs chegarem;
+a cada hora recalcula também a hora anterior. Ajuste `serverCidrs` em
+`collector/config/sources.json` se houver outras redes de servidores e reinicie o coletor:
 
 ```bash
 docker compose restart collector
@@ -224,11 +224,10 @@ No PostgreSQL, como `soc_diag`:
 SELECT kind, count(*), min(hour), max(hour) FROM soc.fw_flow_hourly GROUP BY kind;
 ```
 
-## 7. Ligar o estado das sessões (coletor)
+## 7. Estado das sessões (coletor)
 
-Depois da migração 008, troque `"enabled": false` por `true` na fonte
-`fwsessions.fortigate` em `collector/config/sources.json` e reinicie o coletor. A cada
-5 minutos, o painel **SOC - Firewall: acessos e VPN** passa a mostrar as sessões abertas.
+A fonte `fwsessions.fortigate` já vem ligada e depende da migração 008. A cada 5 minutos, o
+painel **SOC - Firewall: acessos e VPN** passa a mostrar as sessões abertas.
 No PostgreSQL, como `soc_diag`:
 
 ```sql

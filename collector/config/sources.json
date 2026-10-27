@@ -199,7 +199,7 @@
     {
       "name": "fwflows.fortigate",
       "type": "fwflows",
-      "enabled": false,
+      "enabled": true,
       "intervalSeconds": 3600,
       "index": "fw-logs-fortigate",
       "lagMinutes": 15,
@@ -213,7 +213,7 @@
     {
       "name": "fwsessions.fortigate",
       "type": "fwsessions",
-      "enabled": false,
+      "enabled": true,
       "intervalSeconds": 300,
       "index": "fw-logs-fortigate",
       "lookbackHours": 168,
