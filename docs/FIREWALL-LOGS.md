@@ -6,7 +6,7 @@ PostgreSQL guarda só agregados por hora, para cruzar com o Defender.
 ```
 FortiGate ──► FortiAnalyzer ── syslog TCP + TLS (reliable), porta 6514 ──►
 VM-Docker: syslog-relay (TLS, RFC 6587, só o IP do FortiAnalyzer)
-   └─ rede interna ──► Logstash, pipeline "fortigate" (fila própria em disco de 8 GB)
+   └─ rede interna ──► Logstash, pipeline "fortigate" (fila própria em disco de 4 GB)
          └─► Elasticsearch: data stream fw-logs-fortigate (ECS, 10 dias)
                  └─► coletor, fonte fwflows (de hora em hora) ──► PostgreSQL soc.fw_flow_hourly
                         └─► publicação (cursor xid8) ──► Logstash ──► soc-fw-flows-AAAA.MM
@@ -31,7 +31,7 @@ por segundo** no horário comercial, com 1,45 KB por linha.
 | Texto bruto por dia | 9 a 13 GB |
 | Elasticsearch (campos descartados + compressão) | 4 a 6 GB/dia: **40 a 60 GB em 10 dias**, 120 a 180 GB em 30 |
 | PostgreSQL (agregados) | dezenas de milhares de linhas por dia |
-| Fila do Logstash | 8 GB em `LS_DATA_DIR`, cerca de 6 h de pico se o Elasticsearch parar |
+| Fila do Logstash | 4 GB em `LS_DATA_DIR`, cerca de 5 h de pico se o Elasticsearch parar |
 
 Confirme o volume real de 24 h no widget **Log Receive Monitor** do FortiAnalyzer. Em
 27/10/2026 a VM-Docker tinha 98 GB de disco (69 GB livres), por isso a retenção começou em
