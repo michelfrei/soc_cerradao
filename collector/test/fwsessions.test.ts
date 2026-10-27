@@ -34,6 +34,14 @@ describe('estado da sessão', () => {
     expect(d.duration_seconds).toBe(Math.round((now.getTime() - Date.parse('2026-10-27T08:11:31.000Z')) / 1000));
   });
 
+  it('IPsec entre sites: IP remoto no campo de usuário não vira usuário', () => {
+    const ipsec = { '@timestamp': '2026-10-27T14:00:00.000Z', soc: { fw: { session: { state: 'alive' }, access: { kind: 'vpn', channel: 'ipsec', user: '35.208.203.103' } } },
+      fortinet: { firewall: { vpntunnel: 'VPN_CROMAI_PRI' } } };
+    const d = toSession(bucket('vpn|FG1|9', ipsec), now, opts)!;
+    expect(d.user).toBeUndefined();
+    expect(d).toMatchObject({ channel: 'ipsec', vpn_tunnel: 'VPN_CROMAI_PRI' });
+  });
+
   it('fechamento usa o último evento; dados da abertura preenchem o que falta', () => {
     const down = { '@timestamp': '2026-10-27T14:00:00.000Z', soc: { fw: { session: { state: 'close' }, access: { kind: 'vpn' } } },
       source: { bytes: 10 }, destination: { bytes: 20 } };

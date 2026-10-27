@@ -35,6 +35,7 @@ export function sessionQuery(since: Date, now: Date, after?: Record<string, unkn
 type Source = Record<string, unknown>;
 const get = (o: Source | undefined, path: string): unknown => path.split('.').reduce<unknown>((n, k) => (n && typeof n === 'object' ? (n as Source)[k] : undefined), o);
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
+const isIp = (v: string): boolean => /^\d{1,3}(\.\d{1,3}){3}$/.test(v) || /^[0-9a-f:]+:[0-9a-f:]*$/i.test(v);
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 export interface SessionBucket {
@@ -78,7 +79,8 @@ export function toSession(b: SessionBucket, now: Date, src: Pick<FwSessionsSourc
   const doc: SessionDoc = {
     schema_version: SCHEMA_VERSION, session_id: b.key.id, kind, state, state_label: STATE_LABEL[state], last_seen: lastSeen,
     ...(str(pick('soc.fw.access.channel')) ? { channel: pick('soc.fw.access.channel') } : {}),
-    ...(str(pick('soc.fw.access.user')) ? { user: pick('soc.fw.access.user') } : {}),
+    // Túnel IPsec entre sites traz o IP remoto no campo de usuário: não é uma pessoa.
+    ...(str(pick('soc.fw.access.user')) && !isIp(String(pick('soc.fw.access.user'))) ? { user: pick('soc.fw.access.user') } : {}),
     ...(str(pick('source.ip')) ? { source: { ip: pick('source.ip') } } : {}),
     ...(str(pick('fortinet.firewall.tunnelip')) ? { tunnel_ip: pick('fortinet.firewall.tunnelip') } : {}),
     ...(str(pick('fortinet.firewall.vpntunnel')) ? { vpn_tunnel: pick('fortinet.firewall.vpntunnel') } : {}),

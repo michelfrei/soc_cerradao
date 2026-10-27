@@ -811,11 +811,13 @@ const VPN = `${FW_EVENT} and soc.fw.access.kind : "vpn"`;
 const VPN_RESULT = `${VPN} and soc.fw.access.outcome : *`;
 const SESSION_OPEN = 'state : ("open" or "stale")';
 const fwa = {
-  vpnOpen: metric('soc-fwa-vpn-open', 'VPN conectadas agora', 'soc-fw-sessions-state', 'kind : "vpn" and state : "open"'),
+  vpnOpen: metric('soc-fwa-vpn-open', 'Usuários na VPN SSL agora', 'soc-fw-sessions-state', 'kind : "vpn" and channel : "ssl" and state : "open"'),
+  ipsecOpen: metric('soc-fwa-ipsec-open', 'Túneis IPsec ativos agora', 'soc-fw-sessions-state', 'kind : "vpn" and channel : "ipsec" and state : "open"'),
   adminOpen: metric('soc-fwa-admin-open', 'Administradores conectados agora', 'soc-fw-sessions-state', 'kind : "admin" and state : "open"'),
   stale: metric('soc-fwa-stale', 'Sem fechamento registrado', 'soc-fw-sessions-state', 'state : "stale"'),
   openTable: table('soc-fwa-open-table', 'Sessões abertas — usuário, origem e início', 'soc-fw-sessions-state', SESSION_OPEN, [
-    ['user', 'Usuário', 100], ['kind', 'Tipo', 1], ['channel', 'Canal', 1], ['source.ip', 'Origem', 1], ['tunnel_ip', 'IP do túnel', 1],
+    ['user', 'Usuário', 100], ['vpn_tunnel', 'Túnel IPsec', 100], ['kind', 'Tipo', 1], ['channel', 'Canal', 1], ['source.ip', 'Origem', 1],
+    ['tunnel_ip', 'IP do túnel', 1],
     ['state_label', 'Situação', 1],
   ], [['start', col.max('started_at', 'Início', 'date')], ['dur', col.max('duration_seconds', 'Duração (s)')]], 'start'),
   adminOk: metric('soc-fwa-admin-ok', 'Logins administrativos com sucesso', 'fw-logs', `${ADMIN_LOGIN} and soc.fw.access.outcome : "success"`),
@@ -1022,7 +1024,7 @@ dashboards.push(dashboard('soc-dashboard-firewall-acessos', 'SOC - Firewall: ace
       'A tabela de sessões de tráfego da firewall não vem nos logs e não aparece aqui.\n\n' +
       '**Contas** são as do FortiGate (local ou LDAP), sem correlação com a identidade do Defender. O acesso do Claude (claude/soc_readonly) ' +
       'e do fgt-gateway também aparece como login administrativo por SSH.'), 0, 5, 48, 7],
-    [fwa.vpnOpen, 0, 12, 16, 8], [fwa.adminOpen, 16, 12, 16, 8], [fwa.stale, 32, 12, 16, 8],
+    [fwa.vpnOpen, 0, 12, 12, 8], [fwa.ipsecOpen, 12, 12, 12, 8], [fwa.adminOpen, 24, 12, 12, 8], [fwa.stale, 36, 12, 12, 8],
     [fwa.openTable, 0, 20, 48, 18],
     [markdown('### Acesso administrativo ao FortiGate\nLogins pela interface web (https), SSH e console. Falhas de contas inexistentes ou ' +
       'vindas da internet indicam tentativa de acesso indevido.'), 0, 38, 48, 4],

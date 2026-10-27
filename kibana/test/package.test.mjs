@@ -299,5 +299,6 @@ test('firewall access dashboard: open sessions are timeless current state; acces
     assert.ok(['fw-logs', 'soc-fw-sessions-state'].includes(view), o.id);
     if (view === 'fw-logs') assert.match(o.attributes.state.query.query, /event\.dataset : "fortigate\.event" and soc\.fw\.access\.kind/);
   }
-  assert.match(get('soc-fwa-vpn-open').attributes.state.query.query, /state : "open"/);
+  assert.match(get('soc-fwa-vpn-open').attributes.state.query.query, /channel : "ssl" and state : "open"/);
+  assert.match(get('soc-fwa-ipsec-open').attributes.state.query.query, /channel : "ipsec" and state : "open"/);
 });
