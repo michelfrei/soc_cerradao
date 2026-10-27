@@ -77,7 +77,7 @@ test('insights template has its own explicit contract with unknown-capable numer
   assert.equal(f('gpo_settings.policy')?.type, 'keyword');
 });
 
-test('firewall raw logs: data stream with its own explicit mapping, 30-day ILM and reader-restricted name', () => {
+test('firewall raw logs: data stream with its own explicit mapping, 10-day ILM and reader-restricted name', () => {
   const fw = JSON.parse(readFileSync(new URL('../mappings/fw-logs-mappings.json', import.meta.url), 'utf8'));
   const f = (path) => path.split('.').reduce((node, name) => node?.properties?.[name], fw);
   assert.equal(fw.dynamic, false);
@@ -90,7 +90,7 @@ test('firewall raw logs: data stream with its own explicit mapping, 30-day ILM a
   assert.deepEqual(template.data_stream, {});
   assert.equal(template.template.settings['index.lifecycle.name'], 'fw-logs-retention');
   const ilm = JSON.parse(readFileSync(new URL('../ilm/fw-logs-retention.json', import.meta.url), 'utf8'));
-  assert.equal(ilm.policy.phases.delete.min_age, '30d');
+  assert.equal(ilm.policy.phases.delete.min_age, '10d');
   assert.ok(ilm.policy.phases.hot.actions.rollover.max_age);
 });
 

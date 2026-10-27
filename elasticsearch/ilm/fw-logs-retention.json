@@ -1,7 +1,7 @@
 {
   "policy": {
     "_meta": {
-      "description": "Logs brutos do FortiGate: rollover diário ou 30 GB; apagados 30 dias após o rollover."
+      "description": "Logs brutos do FortiGate: rollover diário ou 30 GB; apagados 10 dias após o rollover (30 dias quando o disco da VM-Docker for ampliado)."
     },
     "phases": {
       "hot": {
@@ -14,7 +14,7 @@
         }
       },
       "delete": {
-        "min_age": "30d",
+        "min_age": "10d",
         "actions": {
           "delete": {}
         }

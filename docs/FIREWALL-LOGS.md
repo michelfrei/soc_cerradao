@@ -7,7 +7,7 @@ PostgreSQL guarda só agregados por hora, para cruzar com o Defender.
 FortiGate ──► FortiAnalyzer ── syslog TCP + TLS (reliable), porta 6514 ──►
 VM-Docker: syslog-relay (TLS, RFC 6587, só o IP do FortiAnalyzer)
    └─ rede interna ──► Logstash, pipeline "fortigate" (fila própria em disco de 8 GB)
-         └─► Elasticsearch: data stream fw-logs-fortigate (ECS, 30 dias)
+         └─► Elasticsearch: data stream fw-logs-fortigate (ECS, 10 dias)
                  └─► coletor, fonte fwflows (de hora em hora) ──► PostgreSQL soc.fw_flow_hourly
                         └─► publicação (cursor xid8) ──► Logstash ──► soc-fw-flows-AAAA.MM
 ```
@@ -16,7 +16,7 @@ VM-Docker: syslog-relay (TLS, RFC 6587, só o IP do FortiAnalyzer)
 |---|---|---|
 | `syslog-relay/` | VM-Docker, porta 6514 publicada | Termina o TLS, aceita só os IPs de `FW_SYSLOG_ALLOWED`, separa as mensagens (contagem de octetos ou LF) e entrega uma por linha ao Logstash |
 | `logstash/pipeline/fortigate.conf` + `fortigate.rb` | Logstash, porta 5514 só na rede interna | Interpreta chave=valor, converte para ECS, calcula `soc.fw.verdict` e `network.direction` e descarta campos redundantes |
-| `fw-logs-fortigate` | Elasticsearch | Data stream com mapeamento explícito, `best_compression`, rollover diário e exclusão após 30 dias |
+| `fw-logs-fortigate` | Elasticsearch | Data stream com mapeamento explícito, `best_compression`, rollover diário e exclusão após 10 dias (30 após ampliar o disco) |
 | Fonte `fwflows.fortigate` | Coletor | Agrega cada hora no Elasticsearch (por origem, e fluxos de/para 172.16.159.0/24), grava em `soc.fw_flow_hourly` (30 dias) e publica `soc-fw-flows-*` (395 dias) |
 | Dashboard **SOC - Firewall** | Kibana | Bloqueios, políticas, entradas da internet, países, origens e fluxos dos servidores |
 
@@ -29,13 +29,15 @@ por segundo** no horário comercial, com 1,45 KB por linha.
 |---|---|
 | Sessões por dia | 6 a 9 milhões |
 | Texto bruto por dia | 9 a 13 GB |
-| Elasticsearch (campos descartados + compressão) | 4 a 6 GB/dia, **120 a 180 GB em 30 dias** |
+| Elasticsearch (campos descartados + compressão) | 4 a 6 GB/dia: **40 a 60 GB em 10 dias**, 120 a 180 GB em 30 |
 | PostgreSQL (agregados) | dezenas de milhares de linhas por dia |
 | Fila do Logstash | 8 GB em `LS_DATA_DIR`, cerca de 6 h de pico se o Elasticsearch parar |
 
-Confirme o volume real de 24 h no widget **Log Receive Monitor** do FortiAnalyzer. Deixe
-**250 GB livres** em `ES_DATA_DIR`. Se faltar disco, reduza o `delete.min_age` em
-`elasticsearch/ilm/fw-logs-retention.json` ou filtre tipos de log no FortiAnalyzer.
+Confirme o volume real de 24 h no widget **Log Receive Monitor** do FortiAnalyzer. Em
+27/10/2026 a VM-Docker tinha 98 GB de disco (69 GB livres), por isso a retenção começou em
+**10 dias**. Para voltar a 30 dias, amplie o disco (250 GB livres em `ES_DATA_DIR`) e troque
+`delete.min_age` para `30d` em `elasticsearch/ilm/fw-logs-retention.json`. Depois rode
+`docker compose run --rm setup`; a política nova vale também para os índices existentes.
 
 ## Campos principais
 
@@ -61,7 +63,7 @@ Usuário, MAC e sites acessados identificam pessoas. Por isso:
 - os logs brutos ficam num nome fora de `soc-*` (`fw-logs-*`), legível só por `soc_admin`,
   `soc_analyst` e o usuário de leitura do coletor (`soc_collector_es`). `soc_observer` e
   `soc_reader` não os leem, e os painéis com logs brutos aparecem vazios para eles;
-- a retenção dos brutos é de 30 dias;
+- a retenção dos brutos é de 10 dias (30 depois de ampliar o disco);
 - o uso deve ser investigação de segurança. Se a política interna exigir, o FortiAnalyzer
   pode mascarar campos no encaminhamento (`log-masking-*`).
 

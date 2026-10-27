@@ -945,7 +945,7 @@ dashboards.push(dashboard('soc-dashboard-firewall', 'SOC - Firewall',
       '**Bloqueada** = ação deny ou bloqueio UTM (webfilter, aplicação); uma sessão com UTM bloqueado pode aparecer como close ou reset. ' +
       'Direção vem dos papéis das interfaces (lan/wan): **vindas da internet** = interface de origem wan. ' +
       'Contagens são sessões registradas pela firewall, não usuários nem acessos únicos.\n\n' +
-      '**Dado pessoal:** usuário, MAC e sites acessados identificam pessoas. Os logs brutos ficam 30 dias e só os papéis soc_admin e ' +
+      '**Dado pessoal:** usuário, MAC e sites acessados identificam pessoas. Os logs brutos ficam 10 dias e só os papéis soc_admin e ' +
       'soc_analyst os leem; os agregados por hora (soc-fw-flows) seguem a retenção do histórico. Use para investigação de segurança.'), 0, 5, 48, 7],
     [fw.sessions, 0, 12, 12, 8], [fw.blocked, 12, 12, 12, 8], [fw.inbound, 24, 12, 12, 8], [fw.sources, 36, 12, 12, 8],
     [fw.timeline, 0, 20, 48, 14],
