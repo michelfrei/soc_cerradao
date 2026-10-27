@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
+import type { ElasticConfig } from './elastic/client.js';
 import { EMPTY_CATALOG, parseCatalog, type RemediationCatalog } from './insights/catalog.js';
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -25,6 +26,13 @@ const EnvSchema = z.object({
   PGSSLMODE: z.enum(['disable', 'require', 'verify-full']).default('require'),
   PGSSLROOTCERT_FILE: z.string().optional(),
   PG_POOL_MAX: z.coerce.number().int().min(1).max(20).default(4),
+
+  // Leitura dos logs da firewall (fonte fwflows). Opcional enquanto a fonte estiver desligada.
+  ES_URL: z.string().url().optional(),
+  ES_USER: z.string().default('soc_collector_es'),
+  ES_PASSWORD_FILE: z.string().optional(),
+  ES_CA_FILE: z.string().optional(),
+  ES_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5_000).default(60_000),
 
   SOURCES_FILE: z.string().default('/app/config/sources.json'),
   QUERIES_DIR: z.string().default('/app/queries'),
@@ -110,6 +118,22 @@ const WinUpdatesSource = BaseSource.extend({
   catalogStaleHours: z.number().int().min(1).default(48),
 });
 
+// Agregados por hora do tráfego da firewall, lidos do Elasticsearch (fw-logs-fortigate).
+const Cidr = z.string().regex(/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/, 'CIDR IPv4 inválido');
+const FwFlowsSource = BaseSource.extend({
+  type: z.literal('fwflows'),
+  intervalSeconds: z.number().int().min(300).default(3600),
+  index: z.string().regex(/^[a-z0-9_.*-]+$/).default('fw-logs-fortigate'),
+  // Logs chegam do FortiAnalyzer com atraso de segundos a minutos.
+  lagMinutes: z.number().int().min(0).max(240).default(15),
+  initialLookbackHours: z.number().int().min(1).max(720).default(24),
+  recomputeHours: z.number().int().min(0).max(24).default(1),
+  maxHoursPerRun: z.number().int().min(1).max(168).default(24),
+  serverCidrs: z.array(Cidr).min(1).default(['172.16.159.0/24']),
+  maxBucketsPerHour: z.number().int().min(100).max(200_000).default(50_000),
+  retentionDays: z.number().int().min(1).max(400).default(30),
+});
+
 const ExpectedAsset = z.object({
   name: z.string().trim().min(1),
   id: z.string().trim().min(1).optional(),
@@ -135,7 +159,7 @@ export function parseAssets(raw: unknown): ExpectedAssetConfig[] {
 }
 
 const SourcesFile = z.object({
-  sources: z.array(z.discriminatedUnion('type', [ObjectSource, HuntingSource, InventorySource, SnapshotSource, InsightsSource, MsrcSource, WinUpdatesSource])),
+  sources: z.array(z.discriminatedUnion('type', [ObjectSource, HuntingSource, InventorySource, SnapshotSource, InsightsSource, MsrcSource, WinUpdatesSource, FwFlowsSource])),
 });
 
 export type ObjectSourceConfig = z.infer<typeof ObjectSource>;
@@ -145,8 +169,9 @@ export type SnapshotSourceConfig = z.infer<typeof SnapshotSource> & { query: str
 export type InsightsSourceConfig = z.infer<typeof InsightsSource>;
 export type MsrcSourceConfig = z.infer<typeof MsrcSource>;
 export type WinUpdatesSourceConfig = z.infer<typeof WinUpdatesSource>;
+export type FwFlowsSourceConfig = z.infer<typeof FwFlowsSource>;
 export type SourceConfig = ObjectSourceConfig | HuntingSourceConfig | InventorySourceConfig | SnapshotSourceConfig | InsightsSourceConfig
-  | MsrcSourceConfig | WinUpdatesSourceConfig;
+  | MsrcSourceConfig | WinUpdatesSourceConfig | FwFlowsSourceConfig;
 
 export type GraphCredential =
   | { kind: 'secret'; clientSecret: string }
@@ -173,6 +198,7 @@ export interface Config {
     sslRootCert?: string;
     poolMax: number;
   };
+  elastic: ElasticConfig | null;
   sources: SourceConfig[];
   assets: ExpectedAssetConfig[];
   catalog: RemediationCatalog;
@@ -281,7 +307,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
 
+  // Só exige o acesso ao Elasticsearch quando uma fonte fwflows está ligada.
+  let elastic: ElasticConfig | null = null;
+  if (e.ES_URL && e.ES_PASSWORD_FILE) {
+    elastic = { url: e.ES_URL, user: e.ES_USER, password: readSecretFile(e.ES_PASSWORD_FILE, 'senha do Elasticsearch'),
+      ...(e.ES_CA_FILE ? { ca: readFileSync(e.ES_CA_FILE, 'utf8') } : {}), requestTimeoutMs: e.ES_REQUEST_TIMEOUT_MS };
+  } else if (sources.some((s) => s.type === 'fwflows' && s.enabled)) {
+    throw new Error('fonte fwflows ligada sem ES_URL e ES_PASSWORD_FILE');
+  }
+
   return {
+    elastic,
     graph: {
       tenantId: e.GRAPH_TENANT_ID,
       clientId: e.GRAPH_CLIENT_ID,

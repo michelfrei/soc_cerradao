@@ -6,6 +6,8 @@
 #     2. Define a senha do kibana_system.
 #     3. Cria o papel e o usuário do Logstash e o papel de leitura.
 #     4. Aplica políticas ILM e templates de índice.
+#   O certificado do syslog-relay (logs da firewall) é emitido pela mesma CA na etapa
+#   certs, inclusive em instalações existentes que ainda não o têm.
 # Idempotente: pode ser executado de novo após alterar templates.
 set -euo pipefail
 
@@ -71,8 +73,25 @@ EOF
     cp "$CA_DIR/ca/ca.crt" "$CERTS/ca/ca.crt"
 fi
 
+# Certificado do syslog-relay (TLS do FortiAnalyzer). Emitido à parte para não tocar nos
+# certificados existentes; SAN com o IP/DNS pelo qual o FortiAnalyzer chega à VM.
+if [[ ! -f "$CERTS/syslog/syslog.crt" ]]; then
+    echo "Gerando certificado do syslog-relay"
+    syslog_ip="${SOC_SYSLOG_IP:-${SOC_PUBLIC_IP:-}}"
+    cat > "$CA_DIR/instances-syslog.yml" <<EOF
+instances:
+  - name: syslog
+    dns: [syslog, syslog-relay${extra_dns}]
+    ip: [127.0.0.1${syslog_ip:+, ${syslog_ip}}]
+EOF
+    bin/elasticsearch-certutil cert --silent --pem -out "$CA_DIR/syslog.zip" \
+        --in "$CA_DIR/instances-syslog.yml" --ca-cert "$CA_DIR/ca/ca.crt" --ca-key "$CA_DIR/ca/ca.key"
+    extract "$CA_DIR/syslog.zip" "$CERTS"
+    rm -f "$CA_DIR/syslog.zip"
+fi
+
 # Nunca substituir silenciosamente um conjunto parcial nem trocar a confiança.
-for f in ca/ca.crt es01/es01.crt es01/es01.key kibana/kibana.crt kibana/kibana.key; do
+for f in ca/ca.crt es01/es01.crt es01/es01.key kibana/kibana.crt kibana/kibana.key syslog/syslog.crt syslog/syslog.key; do
     [[ -s "$CERTS/$f" ]] || { echo "Certificado/chave ausente: $f. Restaure o volume legado." >&2; exit 1; }
 done
 [[ "$(cat "$CA_DIR/ca/ca.crt")" == "$(cat "$CERTS/ca/ca.crt")" ]] || { echo "CA pública e privada divergentes; restaure o conjunto correto." >&2; exit 1; }
@@ -93,9 +112,9 @@ publish() {
     mv -f "${destination}.tmp" "$destination"
 }
 install -d -o 1000 -g 0 -m 755 /export/ca
-install -d -o 1000 -g 0 -m 750 /export/es01 /export/kibana
+install -d -o 1000 -g 0 -m 750 /export/es01 /export/kibana /export/syslog
 publish "$CA_CRT" /export/ca/ca.crt 644
-for service in es01 kibana; do
+for service in es01 kibana syslog; do
     publish "$CERTS/$service/$service.crt" "/export/$service/$service.crt" 640
     publish "$CERTS/$service/$service.key" "/export/$service/$service.key" 640
 done
@@ -150,6 +169,10 @@ cat > "$tmp" <<'EOF'
     {
       "names": ["soc-*"],
       "privileges": ["create_index", "create", "index", "write", "view_index_metadata"]
+    },
+    {
+      "names": ["fw-logs-*"],
+      "privileges": ["create_index", "create_doc", "view_index_metadata"]
     }
   ]
 }
@@ -158,6 +181,17 @@ es PUT /_security/role/soc_logstash_writer --data-binary @"$tmp" >/dev/null
 
 printf '{"password":"%s","roles":["soc_logstash_writer"],"full_name":"Logstash SOC"}' "$SOC_ES_LOGSTASH_PASSWORD" > "$tmp"
 es PUT "/_security/user/${SOC_ES_LOGSTASH_USER}" --data-binary @"$tmp" >/dev/null
+
+# Leitura dos logs da firewall pelo coletor (agregados por hora). Opcional: sem a
+# senha no .env, o usuário não é criado e a fonte fwflows fica desligada.
+if [[ -n "${SOC_ES_COLLECTOR_PASSWORD:-}" ]]; then
+    [[ "$SOC_ES_COLLECTOR_PASSWORD" =~ ^[A-Za-z0-9_-]{16,}$ ]] || { echo "Senhas devem ter 16+ caracteres [A-Za-z0-9_-]." >&2; exit 1; }
+    echo "Configurando papel e usuário de leitura do coletor"
+    echo '{"cluster":[],"indices":[{"names":["fw-logs-*"],"privileges":["read"]}]}' > "$tmp"
+    es PUT /_security/role/soc_collector_fw_reader --data-binary @"$tmp" >/dev/null
+    printf '{"password":"%s","roles":["soc_collector_fw_reader"],"full_name":"Coletor SOC (firewall)"}' "$SOC_ES_COLLECTOR_PASSWORD" > "$tmp"
+    es PUT "/_security/user/${SOC_ES_COLLECTOR_USER:-soc_collector_es}" --data-binary @"$tmp" >/dev/null
+fi
 
 # Papéis humanos completos (índices + recursos por espaço) são geridos pelo
 # kibana-setup via API Kibana. Não sobrescrever aqui as permissões de aplicações.
@@ -184,12 +218,31 @@ WINUPDATES_MAPPINGS="$SETUP/mappings/soc-windows-updates-mappings.json"
 { printf '{"template":{"mappings":'; cat "$WINUPDATES_MAPPINGS"; printf '}}'; } > "$tmp"
 es PUT /_component_template/soc-windows-updates-mappings --data-binary @"$tmp" >/dev/null
 
+echo "Component template: fw-logs-mappings"
+FW_MAPPINGS="$SETUP/mappings/fw-logs-mappings.json"
+{ printf '{"template":{"mappings":'; cat "$FW_MAPPINGS"; printf '}}'; } > "$tmp"
+es PUT /_component_template/fw-logs-mappings --data-binary @"$tmp" >/dev/null
+
+echo "Component template: soc-fw-flows-mappings"
+FWFLOWS_MAPPINGS="$SETUP/mappings/soc-fw-flows-mappings.json"
+{ printf '{"template":{"mappings":'; cat "$FWFLOWS_MAPPINGS"; printf '}}'; } > "$tmp"
+es PUT /_component_template/soc-fw-flows-mappings --data-binary @"$tmp" >/dev/null
+
 # Índices já existentes recebem os campos novos (somente inclusão; o ES recusa
 # mudança de tipo). Documentos antigos só ganham os campos novos se republicados.
-# soc-insights e soc-windows-updates* têm mapeamento próprio e ficam de fora.
-if es GET '/_cat/indices/soc-*,-soc-insights,-soc-windows-updates*?h=index' 2>/dev/null | grep -q .; then
+# soc-insights, soc-windows-updates* e soc-fw-flows-* têm mapeamento próprio e ficam de fora.
+if es GET '/_cat/indices/soc-*,-soc-insights,-soc-windows-updates*,-soc-fw-flows-*?h=index' 2>/dev/null | grep -q .; then
     echo "Atualizando mapeamento dos índices soc-* existentes"
-    es PUT '/soc-*,-soc-insights,-soc-windows-updates*/_mapping' --data-binary @"$MAPPINGS" >/dev/null
+    es PUT '/soc-*,-soc-insights,-soc-windows-updates*,-soc-fw-flows-*/_mapping' --data-binary @"$MAPPINGS" >/dev/null
+fi
+if es GET '/_cat/indices/soc-fw-flows-*?h=index' 2>/dev/null | grep -q .; then
+    echo "Atualizando mapeamento de soc-fw-flows-*"
+    es PUT '/soc-fw-flows-*/_mapping' --data-binary @"$FWFLOWS_MAPPINGS" >/dev/null
+fi
+# Data stream: campos novos valem para o índice de escrita atual; os próximos usam o template.
+if es GET '/_data_stream/fw-logs-fortigate' >/dev/null 2>&1; then
+    echo "Atualizando mapeamento de fw-logs-fortigate"
+    es PUT '/fw-logs-fortigate/_mapping' --data-binary @"$FW_MAPPINGS" >/dev/null
 fi
 if es GET '/_cat/indices/soc-windows-updates*?h=index' 2>/dev/null | grep -q .; then
     echo "Atualizando mapeamento de soc-windows-updates*"

@@ -39,8 +39,8 @@ test('all saved-object IDs and references resolve, including dashboard panel ref
   }
 });
 
-test('ten dashboards have valid nonoverlapping panel layouts', () => {
-  assert.equal(dashboards.length, 10);
+test('eleven dashboards have valid nonoverlapping panel layouts', () => {
+  assert.equal(dashboards.length, 11);
   for (const d of dashboards) {
     const panels = JSON.parse(d.attributes.panelsJSON);
     for (const [i, p] of panels.entries()) {
@@ -270,4 +270,21 @@ test('windows update dashboard is scoped to SRV* on its own timeless data view, 
   for (const r of d.references.filter((r) => r.name.startsWith('controlGroup_'))) assert.equal(r.id, 'soc-windows-updates');
   const text = JSON.stringify(d.attributes.panelsJSON);
   assert.match(text, /não indica que o servidor está com reinicialização pendente/);
+});
+
+test('firewall dashboard reads its own data views and keeps raw logs out of the soc-* reader roles', () => {
+  assert.equal(get('fw-logs').attributes.title, 'fw-logs-*');
+  assert.equal(get('fw-logs').attributes.timeFieldName, '@timestamp');
+  assert.equal(get('soc-fw-flows').attributes.timeFieldName, '@timestamp');
+  const d = get('soc-dashboard-firewall');
+  for (const r of d.references.filter((r) => r.type === 'lens')) {
+    const o = get(r.id);
+    assert.ok(['fw-logs', 'soc-fw-flows'].includes(o.references[0].id), o.id);
+    if (o.references[0].id === 'fw-logs') assert.match(o.attributes.state.query.query, /event\.dataset : "fortigate\.traffic"/);
+  }
+  for (const file of readdirSync(new URL('roles/', root))) {
+    const role = JSON.parse(readFileSync(new URL(`roles/${file}`, root), 'utf8'));
+    const reads = role.elasticsearch.indices.some((p) => p.names.includes('fw-logs-*'));
+    assert.equal(reads, ['soc_admin.json', 'soc_analyst.json'].includes(file), file);
+  }
 });

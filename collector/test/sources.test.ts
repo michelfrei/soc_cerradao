@@ -115,7 +115,10 @@ describe('parseSources', () => {
       'snapshot.devicetvmsoftwarevulnerabilities', 'snapshot.devicetvmsecureconfigurationassessment',
       'snapshot.devicetvmsoftwareinventory', 'msrc.windows-server', 'windows.updates', 'insights.remediation',
       'inventory.deviceinfo', 'incidents', 'alerts', 'hunting.devicelogonevents', 'hunting.asr', 'reconcile.devicelogonevents', 'reconcile.asr',
+      'fwflows.fortigate',
     ]);
+    // Agregados da firewall só ligam depois do usuário de leitura no Elasticsearch.
+    expect(sources.find((s) => s.name === 'fwflows.fortigate')?.enabled).toBe(false);
   });
 
   it('exige os marcadores de período na consulta', () => {

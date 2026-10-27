@@ -76,3 +76,32 @@ test('insights template has its own explicit contract with unknown-capable numer
   assert.equal(f('exploit_available')?.type, 'boolean');
   assert.equal(f('gpo_settings.policy')?.type, 'keyword');
 });
+
+test('firewall raw logs: data stream with its own explicit mapping, 30-day ILM and reader-restricted name', () => {
+  const fw = JSON.parse(readFileSync(new URL('../mappings/fw-logs-mappings.json', import.meta.url), 'utf8'));
+  const f = (path) => path.split('.').reduce((node, name) => node?.properties?.[name], fw);
+  assert.equal(fw.dynamic, false);
+  for (const name of ['source.ip', 'destination.ip', 'source.nat.ip', 'fortinet.firewall.remip']) assert.equal(f(name)?.type, 'ip', name);
+  for (const name of ['source.port', 'destination.port']) assert.equal(f(name)?.type, 'integer', name);
+  for (const name of ['source.bytes', 'destination.bytes', 'network.bytes', 'event.duration']) assert.equal(f(name)?.type, 'long', name);
+  for (const name of ['soc.fw.verdict', 'network.direction', 'rule.name', 'user.name', 'fortinet.firewall.catdesc']) assert.equal(f(name)?.type, 'keyword', name);
+  const template = JSON.parse(readFileSync(new URL('../templates/index-fw-logs-fortigate.json', import.meta.url), 'utf8'));
+  assert.deepEqual(template.index_patterns, ['fw-logs-*']);
+  assert.deepEqual(template.data_stream, {});
+  assert.equal(template.template.settings['index.lifecycle.name'], 'fw-logs-retention');
+  const ilm = JSON.parse(readFileSync(new URL('../ilm/fw-logs-retention.json', import.meta.url), 'utf8'));
+  assert.equal(ilm.policy.phases.delete.min_age, '30d');
+  assert.ok(ilm.policy.phases.hot.actions.rollover.max_age);
+});
+
+test('firewall hourly aggregates have their own mapping and long-term history ILM', () => {
+  const flows = JSON.parse(readFileSync(new URL('../mappings/soc-fw-flows-mappings.json', import.meta.url), 'utf8'));
+  const f = (path) => path.split('.').reduce((node, name) => node?.properties?.[name], flows);
+  assert.equal(flows.dynamic, false);
+  for (const name of ['fw.sessions', 'fw.bytes_sent', 'fw.bytes_received', 'fw.bytes_total']) assert.equal(f(name)?.type, 'long', name);
+  assert.equal(f('source.ip')?.type, 'ip');
+  assert.equal(f('computed_at')?.type, 'date');
+  const template = JSON.parse(readFileSync(new URL('../templates/index-soc-fw-flows.json', import.meta.url), 'utf8'));
+  assert.deepEqual(template.composed_of, ['soc-fw-flows-mappings']);
+  assert.equal(template.template.settings['index.lifecycle.name'], 'soc-history-retention');
+});

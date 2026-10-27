@@ -1,0 +1,20 @@
+{
+  "index_patterns": [
+    "soc-fw-flows-*"
+  ],
+  "priority": 210,
+  "composed_of": [
+    "soc-fw-flows-mappings"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "30s",
+      "index.lifecycle.name": "soc-history-retention"
+    }
+  },
+  "_meta": {
+    "description": "Agregados por hora do tráfego da firewall calculados pelo coletor (ID estável hora|tipo|chave)."
+  }
+}

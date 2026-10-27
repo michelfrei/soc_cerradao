@@ -195,6 +195,20 @@
       "minWindowMinutes": 1,
       "maxRows": 30000,
       "maxWindowsPerRun": 6
+    },
+    {
+      "name": "fwflows.fortigate",
+      "type": "fwflows",
+      "enabled": false,
+      "intervalSeconds": 3600,
+      "index": "fw-logs-fortigate",
+      "lagMinutes": 15,
+      "initialLookbackHours": 24,
+      "recomputeHours": 1,
+      "maxHoursPerRun": 24,
+      "serverCidrs": ["172.16.159.0/24"],
+      "maxBucketsPerHour": 50000,
+      "retentionDays": 30
     }
   ]
 }

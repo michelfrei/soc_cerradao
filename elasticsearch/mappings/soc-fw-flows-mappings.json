@@ -1,0 +1,105 @@
+{
+  "dynamic": false,
+  "properties": {
+    "@timestamp": {
+      "type": "date"
+    },
+    "schema_version": {
+      "type": "keyword"
+    },
+    "kind": {
+      "type": "keyword"
+    },
+    "flow_id": {
+      "type": "keyword"
+    },
+    "computed_at": {
+      "type": "date"
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "source": {
+      "properties": {
+        "ip": {
+          "type": "ip"
+        }
+      }
+    },
+    "destination": {
+      "properties": {
+        "ip": {
+          "type": "ip"
+        },
+        "port": {
+          "type": "integer"
+        }
+      }
+    },
+    "network": {
+      "properties": {
+        "direction": {
+          "type": "keyword"
+        },
+        "transport": {
+          "type": "keyword"
+        }
+      }
+    },
+    "soc": {
+      "properties": {
+        "fw": {
+          "properties": {
+            "verdict": {
+              "type": "keyword"
+            }
+          }
+        }
+      }
+    },
+    "fw": {
+      "properties": {
+        "sessions": {
+          "type": "long"
+        },
+        "bytes_sent": {
+          "type": "long"
+        },
+        "bytes_received": {
+          "type": "long"
+        },
+        "bytes_total": {
+          "type": "long"
+        },
+        "destinations": {
+          "type": "integer"
+        },
+        "users": {
+          "type": "keyword"
+        },
+        "categories": {
+          "type": "keyword"
+        },
+        "rules": {
+          "type": "keyword"
+        }
+      }
+    },
+    "event": {
+      "properties": {
+        "kind": {
+          "type": "keyword"
+        },
+        "module": {
+          "type": "keyword"
+        },
+        "dataset": {
+          "type": "keyword"
+        },
+        "ingested": {
+          "type": "date"
+        }
+      }
+    }
+  }
+}

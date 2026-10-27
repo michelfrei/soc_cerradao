@@ -110,7 +110,7 @@ GRAPH_CLIENT_ID=00000000-0000-0000-0000-000000000000
 "@ | Set-Content -Encoding ascii $envFile
         $secrets = "$root\docker\secrets"
         $created = @()
-        foreach ($s in 'graph_client_secret', 'pg_collector_password') {
+        foreach ($s in 'graph_client_secret', 'pg_collector_password', 'es_collector_password') {
             if (-not (Test-Path "$secrets\$s")) { Set-Content "$secrets\$s" 'x'; $created += "$secrets\$s" }
         }
         try {
@@ -136,6 +136,14 @@ GRAPH_CLIENT_ID=00000000-0000-0000-0000-000000000000
             -e SOC_ES_HOSTS=https://es01:9200 -e SOC_ES_LOGSTASH_USER=x -e SOC_ES_LOGSTASH_PASSWORD=x `
             "docker.elastic.co/logstash/logstash:$StackVersion" `
             bin/logstash --config.test_and_exit -f /usr/share/logstash/pipeline/soc-publication.conf
+        if ($LASTEXITCODE -ne 0) { throw 'pipeline soc-publication inválida' }
+        # Pipeline da firewall: sintaxe e os testes Ruby de fortigate.rb.
+        docker run --rm `
+            -v "${fakeCerts}:/usr/share/logstash/certs:ro" `
+            -v "${root}\logstash\pipeline:/usr/share/logstash/pipeline:ro" `
+            -e SOC_ES_HOSTS=https://es01:9200 -e SOC_ES_LOGSTASH_USER=x -e SOC_ES_LOGSTASH_PASSWORD=x `
+            "docker.elastic.co/logstash/logstash:$StackVersion" `
+            bin/logstash --config.test_and_exit -f /usr/share/logstash/pipeline/fortigate.conf
     }
 
     Invoke-Step 'Scripts shell: sintaxe e shellcheck' {
@@ -148,6 +156,12 @@ GRAPH_CLIENT_ID=00000000-0000-0000-0000-000000000000
         docker run --rm -v "${root}:/repo:ro" -w /repo $NodeImage node kibana/build.mjs --check
         if ($LASTEXITCODE -ne 0) { throw 'pacote Kibana desatualizado' }
         docker run --rm -v "${root}:/repo:ro" -w /repo $NodeImage node --test kibana/test/package.test.mjs
+    }
+
+    Invoke-Step 'syslog-relay: enquadramento RFC 6587 e TLS' {
+        # Imagem completa: o teste gera o certificado com o openssl, ausente na slim.
+        docker run --rm -v "${root}:/repo:ro" -w /repo node:24-bookworm node --test syslog-relay/test/relay.test.mjs
+        if ($LASTEXITCODE -ne 0) { throw 'testes do syslog-relay falharam' }
     }
 
     Invoke-Step 'Elasticsearch: contratos de campos e estado atual' {

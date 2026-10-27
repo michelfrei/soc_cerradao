@@ -29,6 +29,9 @@ const DATA_VIEWS = [
   { id: 'soc-metrics', title: 'soc-metrics-*', name: 'SOC - Coleta e capacidade' },
   { id: 'soc-metrics-current', title: 'soc-metrics-*', name: 'SOC - Últimas execuções sem corte temporal', timeless: true },
   { id: 'soc-elastic-alerts', title: '.alerts-security.alerts-soc', name: 'SOC - Alertas de detecção Elastic' },
+  // Logs brutos da firewall: dado pessoal, leitura só para soc_admin e soc_analyst.
+  { id: 'fw-logs', title: 'fw-logs-*', name: 'SOC - Firewall (logs do FortiGate)' },
+  { id: 'soc-fw-flows', title: 'soc-fw-flows-*', name: 'SOC - Firewall (agregados por hora)' },
 ];
 
 const dataViewObjects = DATA_VIEWS.map((d) => ({
@@ -56,6 +59,7 @@ const TERM_TYPES = {
   'source.ip': 'ip', 'destination.ip': 'ip',
   'soc.network.local_ip': 'ip', 'soc.network.remote_ip': 'ip',
   'soc.network.local_port': 'number', 'soc.network.remote_port': 'number',
+  'destination.port': 'number',
 };
 
 const col = {
@@ -76,6 +80,10 @@ const col = {
     isBucketed: false, scale: dataType === 'number' ? 'ratio' : dataType === 'date' ? 'interval' : 'ordinal',
     params: { sortField: '@timestamp', showArrayValues: false },
     filter: { query: `${field} : *`, language: 'kuery' },
+  }),
+  sum: (field, label) => ({
+    label, customLabel: true, dataType: 'number', operationType: 'sum', sourceField: field,
+    isBucketed: false, scale: 'ratio', params: { emptyAsNull: false },
   }),
   // Um documento por grupo (ex.: insight_id): o máximo é o próprio valor, sem soma.
   max: (field, label, dataType = 'number') => ({
@@ -305,7 +313,7 @@ const NAV_ITEMS = [
   ['soc-dashboard-cobertura', 'Cobertura e capacidade'],
   ['soc-dashboard-processos-rede', 'Processos e conexões'], ['soc-dashboard-exposicao', 'Exposição e proteção'],
   ['soc-dashboard-acessos-servidores', 'Acessos aos servidores'], ['soc-dashboard-remediacao', 'Remediação'],
-  ['soc-dashboard-windows-updates', 'Atualização do Windows'],
+  ['soc-dashboard-windows-updates', 'Atualização do Windows'], ['soc-dashboard-firewall', 'Firewall'],
 ];
 const nav = () => markdown(NAV_ITEMS.map(([id, title]) => `[${title}](/s/soc/app/dashboards#/view/${id})`).join(' · ') +
   '\n\n**Escopo:** nome contém srv ou fisico, exclui note ou micro. Para correlacionar, filtre por **host.id** e **soc.identity.correlation_key**. ' +
@@ -757,8 +765,42 @@ const wuSearch = search('soc-search-windows-updates', 'Detalhe por servidor — 
 wuSearch.attributes.sort = [['host.name', 'asc']];
 detailSearches.push(wuSearch);
 
+// Firewall: logs do FortiGate via FortiAnalyzer (fw-logs-*) e agregados por hora (soc-fw-flows-*) ---
+
+const FW = 'event.dataset : "fortigate.traffic"';
+const FW_BLOCKED = `${FW} and soc.fw.verdict : "blocked"`;
+const FW_INBOUND = `${FW} and network.direction : "inbound"`;
+const FW_SERVER = 'kind : "server"';
+const fw = {
+  sessions: metric('soc-fw-sessions', 'Sessões registradas', 'fw-logs', FW),
+  blocked: metric('soc-fw-blocked', 'Sessões bloqueadas (deny ou UTM)', 'fw-logs', FW_BLOCKED),
+  inbound: metric('soc-fw-inbound', 'Sessões vindas da internet', 'fw-logs', FW_INBOUND),
+  sources: metric('soc-fw-sources', 'Origens distintas', 'fw-logs', FW, col.unique('source.ip', 'Origens distintas')),
+  timeline: timeline('soc-fw-timeline', 'Sessões no tempo por veredito', 'fw-logs', FW, 'soc.fw.verdict', 'Veredito', 2),
+  categories: ranking('soc-fw-categories', 'Bloqueios por categoria web (UTM)', 'fw-logs', `${FW_BLOCKED} and fortinet.firewall.catdesc : *`,
+    'fortinet.firewall.catdesc', 'Categoria', 12),
+  rules: ranking('soc-fw-rules', 'Sessões por política e veredito', 'fw-logs', FW, 'rule.name', 'Política', 12,
+    { field: 'soc.fw.verdict', label: 'Veredito' }),
+  countries: donut('soc-fw-countries', 'Destinos por país', 'fw-logs', `${FW} and destination.geo.country_name : *`,
+    'destination.geo.country_name', 'País', 8),
+  blockedSources: table('soc-fw-blocked-sources', 'Origens com mais bloqueios — top 30', 'fw-logs', FW_BLOCKED, [
+    ['source.ip', 'Origem', 30], ['fortinet.firewall.srcname', 'Nome do dispositivo', 1], ['observer.ingress.interface.name', 'Interface', 1],
+  ], [['dst', col.unique('destination.ip', 'Destinos distintos')]]),
+  inboundTable: table('soc-fw-inbound-table', 'Entradas vindas da internet — origem, destino e porta', 'fw-logs', FW_INBOUND, [
+    ['source.ip', 'Origem', 30], ['destination.ip', 'Destino', 1], ['destination.port', 'Porta', 1], ['soc.fw.verdict', 'Veredito', 1],
+  ]),
+  servers: table('soc-fw-servers', 'Fluxos de e para os servidores (agregado por hora)', 'soc-fw-flows', FW_SERVER, [
+    ['destination.ip', 'Destino', 30], ['destination.port', 'Porta', 3], ['source.ip', 'Origem', 3], ['soc.fw.verdict', 'Veredito', 1],
+  ], [['ses', col.sum('fw.sessions', 'Sessões')], ['bytes', col.sum('fw.bytes_total', 'Bytes')]], 'ses'),
+};
+fw.servers.attributes.state.datasourceStates.formBased.layers[LAYER].columns.m.label = 'Horas com tráfego';
+const fwSearch = search('soc-search-firewall', 'Logs da firewall — sessões detalhadas', 'fw-logs', FW,
+  ['source.ip', 'user.name', 'destination.ip', 'destination.port', 'destination.domain', 'network.application', 'event.action',
+    'fortinet.firewall.utmaction', 'fortinet.firewall.catdesc', 'rule.name', 'soc.fw.verdict', 'network.bytes']);
+detailSearches.push(fwSearch);
+
 const lensObjects = [...Object.values(ov), ...Object.values(ac), ...Object.values(srv), ...Object.values(asr), ...Object.values(cap),
-  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv), ...Object.values(rem), ...Object.values(wu)];
+  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv), ...Object.values(rem), ...Object.values(wu), ...Object.values(fw)];
 const dashboards = [
   dashboard('soc-dashboard-overview', 'SOC - Visão operacional', known, [
     [nav(), 0, 0, 48, 5], [markdown(`**${known}** Os incidentes/alertas Defender abrangem o tenant; o escopo de servidores é aplicado aos eventos e ao inventário. Alertas Elastic são detecções executadas neste espaço SOC e obedecem ao período selecionado.`), 0, 5, 48, 5],
@@ -894,6 +936,30 @@ dashboards.push(dashboard('soc-dashboard-windows-updates', 'SOC - Atualização 
   ], 'now-30d', [
     ['host.name', 'Servidor', 'soc-windows-updates'], ['windows.product', 'Windows Server', 'soc-windows-updates'],
     ['status_label', 'Situação', 'soc-windows-updates'],
+  ]));
+
+dashboards.push(dashboard('soc-dashboard-firewall', 'SOC - Firewall',
+  'Tráfego do FortiGate recebido pelo FortiAnalyzer: bloqueios, políticas, entradas da internet e fluxos dos servidores.', [
+    [nav(), 0, 0, 48, 5],
+    [markdown('**Fonte:** logs de tráfego do FortiGate encaminhados pelo FortiAnalyzer (um documento por sessão encerrada). ' +
+      '**Bloqueada** = ação deny ou bloqueio UTM (webfilter, aplicação); uma sessão com UTM bloqueado pode aparecer como close ou reset. ' +
+      'Direção vem dos papéis das interfaces (lan/wan): **vindas da internet** = interface de origem wan. ' +
+      'Contagens são sessões registradas pela firewall, não usuários nem acessos únicos.\n\n' +
+      '**Dado pessoal:** usuário, MAC e sites acessados identificam pessoas. Os logs brutos ficam 30 dias e só os papéis soc_admin e ' +
+      'soc_analyst os leem; os agregados por hora (soc-fw-flows) seguem a retenção do histórico. Use para investigação de segurança.'), 0, 5, 48, 7],
+    [fw.sessions, 0, 12, 12, 8], [fw.blocked, 12, 12, 12, 8], [fw.inbound, 24, 12, 12, 8], [fw.sources, 36, 12, 12, 8],
+    [fw.timeline, 0, 20, 48, 14],
+    [fw.categories, 0, 34, 24, 16], [fw.rules, 24, 34, 24, 16],
+    [fw.blockedSources, 0, 50, 32, 18], [fw.countries, 32, 50, 16, 18],
+    [fw.inboundTable, 0, 68, 48, 18],
+    [markdown('**Servidores:** agregados por hora calculados pelo coletor para origem ou destino nas redes de servidores (padrão 172.16.159.0/24). ' +
+      '"Horas com tráfego" conta documentos (uma linha por hora e fluxo); some **Sessões**, não horas. Uma hora pode ser recalculada e ' +
+      'substituída com dados que chegaram atrasados.'), 0, 86, 48, 5],
+    [fw.servers, 0, 91, 48, 20],
+    [fwSearch, 0, 111, 48, 22],
+  ], 'now-24h', [
+    ['source.ip', 'Origem', 'fw-logs'], ['destination.ip', 'Destino', 'fw-logs'], ['rule.name', 'Política', 'fw-logs'],
+    ['soc.fw.verdict', 'Veredito', 'fw-logs'],
   ]));
 
 // Regras de detecção ---------------------------------------------------------------------

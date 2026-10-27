@@ -2,3 +2,11 @@
   path.config: "/usr/share/logstash/pipeline/soc-publication.conf"
   pipeline.workers: 2
   pipeline.batch.size: 500
+# Logs do FortiGate via FortiAnalyzer: ~150 eventos/s no pico. Fila própria em disco
+# (cerca de 6 h de pico) para segurar uma parada do Elasticsearch sem perder log.
+- pipeline.id: fortigate
+  path.config: "/usr/share/logstash/pipeline/fortigate.conf"
+  pipeline.workers: 2
+  pipeline.batch.size: 1000
+  queue.type: persisted
+  queue.max_bytes: 8gb

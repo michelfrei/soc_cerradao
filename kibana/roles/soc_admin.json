@@ -1,9 +1,10 @@
 {
-  "description": "Administrador funcional SOC: sete dashboards, consultas de eventos e soc-posture, regras, alertas e Cases no espaco SOC. Sem superuser ou gestao de usuarios/cluster.",
+  "description": "Administrador funcional SOC: sete dashboards, consultas de eventos, soc-posture e logs da firewall (fw-logs-*), regras, alertas e Cases no espaco SOC. Sem superuser ou gestao de usuarios/cluster.",
   "elasticsearch": {
     "cluster": ["monitor", "manage_own_api_key"],
     "indices": [
       { "names": ["soc-*"], "privileges": ["read", "view_index_metadata"] },
+      { "names": ["fw-logs-*"], "privileges": ["read", "view_index_metadata"] },
       { "names": [".alerts-security.alerts-soc", ".internal.alerts-security.alerts-soc-*", ".lists-soc", ".items-soc"], "privileges": ["manage", "write", "read", "view_index_metadata", "maintenance"] },
       { "names": [".preview.alerts-security.alerts-soc", ".internal.preview.alerts-security.alerts-soc-*"], "privileges": ["read", "view_index_metadata"] }
     ]

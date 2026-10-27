@@ -294,6 +294,23 @@ def filter(event)
     return [event]
   end
 
+  if entity == 'fwflow'
+    # Agregado por hora do tráfego da firewall (collector/src/sources/fwflows.ts).
+    # ID estável hora|tipo|chave; versão = cálculo, para o recálculo substituir o anterior.
+    computed = present(data['computed_at'])
+    return [] unless %w[source server].include?(dataset) && present(data['flow_id']) && present(data['@timestamp']) && computed && present(data['schema_version'])
+    data.each { |key, value| event.set("[#{key}]", value) unless key == '@timestamp' || value.nil? }
+    event.remove('defender')
+    event.set('[event][kind]', 'metric')
+    event.set('[event][module]', 'soc')
+    event.set('[event][dataset]', "soc.fw_flows_#{dataset}")
+    event.set('[event][ingested]', LogStash::Timestamp.now)
+    event.set('[@metadata][doc_id]', data['flow_id'])
+    event.set('[@metadata][index]', "soc-fw-flows-#{Time.iso8601(data['@timestamp']).utc.strftime('%Y.%m')}")
+    event.set('[@metadata][version]', (Time.iso8601(computed).to_r * 1000).to_i.to_s)
+    return [event]
+  end
+
   if entity == 'insight'
     # Documento já estruturado pelo coletor (insights/engine.ts); só valida o contrato
     # mínimo e o leva à raiz. Versão externa evita regressão por execução antiga.
@@ -808,6 +825,23 @@ test 'estado de atualização do Windows: atual por servidor e histórico diári
       events[1].get('[@metadata][index]') == 'soc-windows-updates-history-2026.10' && events[1].get('[@metadata][doc_id]') == 'd1|2026-10-23' &&
       events[0].get('[@metadata][version]') == '1792756800000' && events[0].get('[update][latest_kb]') == 'KB5126655' &&
       events[0].get('[update][reboot_required]').nil? && events[0].get('defender').nil?
+  end
+end
+
+test 'agregado da firewall: índice mensal, ID estável e versão do cálculo' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    doc = { '@timestamp' => '2026-10-27T13:00:00.000Z', 'schema_version' => '1.0', 'kind' => 'source', 'flow_id' => 'f1',
+      'computed_at' => '2026-10-27T14:20:00.000Z', 'source' => { 'ip' => '172.20.15.99' }, 'soc' => { 'fw' => { 'verdict' => 'blocked' } },
+      'fw' => { 'sessions' => 12 } }
+    [ { 'soc' => { 'entity' => 'fwflow', 'dataset' => 'source' }, 'defender' => doc },
+      { 'soc' => { 'entity' => 'fwflow', 'dataset' => 'outro' }, 'defender' => doc } ]
+  end
+  expect('um documento roteado; dataset inválido descartado') do |events|
+    e = events[0]
+    events.length == 1 && e.get('[@metadata][index]') == 'soc-fw-flows-2026.10' && e.get('[@metadata][doc_id]') == 'f1' &&
+      e.get('[@metadata][version]') == '1793110800000' && e.get('[soc][fw][verdict]') == 'blocked' && e.get('[fw][sessions]') == 12 &&
+      e.get('[source][ip]') == '172.20.15.99' && e.get('defender').nil?
   end
 end
 

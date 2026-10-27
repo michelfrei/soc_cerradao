@@ -35,6 +35,9 @@ PostgreSQL → Logstash → Elasticsearch / Kibana (Elastic Security).
 - Atualização do Windows: servidores SRV* com Windows Server comparados com a
   atualização de segurança da própria build (Defender + Security Update Guide da
   Microsoft). [Atualização do Windows](docs/ATUALIZACAO-WINDOWS.md).
+- Firewall: logs do FortiGate encaminhados pelo FortiAnalyzer (syslog TLS) para
+  `fw-logs-fortigate` no Elastic, com agregados por hora no PostgreSQL e o dashboard
+  **SOC - Firewall**. [Logs da firewall](docs/FIREWALL-LOGS.md) (migração 007, coletor 0.5.0).
 - Capacidade: snapshots PostgreSQL/Elasticsearch; relatório manual da VM em
   `bash scripts/capacity-report.sh docker` ou `postgres`.
 - Ainda não incluídos: backup automatizado, Grafana, CI, exportação detalhada da

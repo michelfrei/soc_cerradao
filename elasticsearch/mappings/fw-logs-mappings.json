@@ -1,0 +1,344 @@
+{
+  "dynamic": false,
+  "properties": {
+    "@timestamp": {
+      "type": "date"
+    },
+    "message": {
+      "type": "match_only_text"
+    },
+    "tags": {
+      "type": "keyword"
+    },
+    "ecs": {
+      "properties": {
+        "version": {
+          "type": "keyword"
+        }
+      }
+    },
+    "event": {
+      "properties": {
+        "kind": {
+          "type": "keyword"
+        },
+        "module": {
+          "type": "keyword"
+        },
+        "dataset": {
+          "type": "keyword"
+        },
+        "category": {
+          "type": "keyword"
+        },
+        "type": {
+          "type": "keyword"
+        },
+        "action": {
+          "type": "keyword"
+        },
+        "code": {
+          "type": "keyword"
+        },
+        "duration": {
+          "type": "long"
+        },
+        "ingested": {
+          "type": "date"
+        }
+      }
+    },
+    "log": {
+      "properties": {
+        "level": {
+          "type": "keyword"
+        }
+      }
+    },
+    "observer": {
+      "properties": {
+        "name": {
+          "type": "keyword"
+        },
+        "serial_number": {
+          "type": "keyword"
+        },
+        "vendor": {
+          "type": "keyword"
+        },
+        "product": {
+          "type": "keyword"
+        },
+        "type": {
+          "type": "keyword"
+        },
+        "ingress": {
+          "properties": {
+            "interface": {
+              "properties": {
+                "name": {
+                  "type": "keyword"
+                }
+              }
+            }
+          }
+        },
+        "egress": {
+          "properties": {
+            "interface": {
+              "properties": {
+                "name": {
+                  "type": "keyword"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "rule": {
+      "properties": {
+        "id": {
+          "type": "keyword"
+        },
+        "name": {
+          "type": "keyword"
+        },
+        "uuid": {
+          "type": "keyword"
+        },
+        "ruleset": {
+          "type": "keyword"
+        }
+      }
+    },
+    "source": {
+      "properties": {
+        "ip": {
+          "type": "ip"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "mac": {
+          "type": "keyword"
+        },
+        "bytes": {
+          "type": "long"
+        },
+        "packets": {
+          "type": "long"
+        },
+        "nat": {
+          "properties": {
+            "ip": {
+              "type": "ip"
+            },
+            "port": {
+              "type": "integer"
+            }
+          }
+        },
+        "geo": {
+          "properties": {
+            "country_name": {
+              "type": "keyword"
+            }
+          }
+        }
+      }
+    },
+    "destination": {
+      "properties": {
+        "ip": {
+          "type": "ip"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "domain": {
+          "type": "keyword"
+        },
+        "bytes": {
+          "type": "long"
+        },
+        "packets": {
+          "type": "long"
+        },
+        "nat": {
+          "properties": {
+            "ip": {
+              "type": "ip"
+            },
+            "port": {
+              "type": "integer"
+            }
+          }
+        },
+        "geo": {
+          "properties": {
+            "country_name": {
+              "type": "keyword"
+            }
+          }
+        }
+      }
+    },
+    "network": {
+      "properties": {
+        "transport": {
+          "type": "keyword"
+        },
+        "iana_number": {
+          "type": "keyword"
+        },
+        "application": {
+          "type": "keyword"
+        },
+        "bytes": {
+          "type": "long"
+        },
+        "packets": {
+          "type": "long"
+        },
+        "direction": {
+          "type": "keyword"
+        }
+      }
+    },
+    "user": {
+      "properties": {
+        "name": {
+          "type": "keyword"
+        },
+        "group": {
+          "properties": {
+            "name": {
+              "type": "keyword"
+            }
+          }
+        }
+      }
+    },
+    "url": {
+      "properties": {
+        "original": {
+          "type": "wildcard",
+          "ignore_above": 8192
+        }
+      }
+    },
+    "soc": {
+      "properties": {
+        "fw": {
+          "properties": {
+            "verdict": {
+              "type": "keyword"
+            }
+          }
+        }
+      }
+    },
+    "fortinet": {
+      "properties": {
+        "firewall": {
+          "properties": {
+            "type": {
+              "type": "keyword"
+            },
+            "subtype": {
+              "type": "keyword"
+            },
+            "vd": {
+              "type": "keyword"
+            },
+            "srcname": {
+              "type": "keyword"
+            },
+            "srcintfrole": {
+              "type": "keyword"
+            },
+            "srchwvendor": {
+              "type": "keyword"
+            },
+            "osname": {
+              "type": "keyword"
+            },
+            "devtype": {
+              "type": "keyword"
+            },
+            "dstintfrole": {
+              "type": "keyword"
+            },
+            "dstowner": {
+              "type": "keyword"
+            },
+            "trandisp": {
+              "type": "keyword"
+            },
+            "service": {
+              "type": "keyword"
+            },
+            "appcat": {
+              "type": "keyword"
+            },
+            "catdesc": {
+              "type": "keyword"
+            },
+            "utmaction": {
+              "type": "keyword"
+            },
+            "sessionid": {
+              "type": "keyword"
+            },
+            "unauthuser": {
+              "type": "keyword"
+            },
+            "sdwan_rule": {
+              "type": "keyword"
+            },
+            "attack": {
+              "type": "keyword"
+            },
+            "virus": {
+              "type": "keyword"
+            },
+            "severity": {
+              "type": "keyword"
+            },
+            "logdesc": {
+              "type": "keyword"
+            },
+            "eventtype": {
+              "type": "keyword"
+            },
+            "profile": {
+              "type": "keyword"
+            },
+            "ui": {
+              "type": "keyword"
+            },
+            "status": {
+              "type": "keyword"
+            },
+            "reason": {
+              "type": "keyword"
+            },
+            "tunneltype": {
+              "type": "keyword"
+            },
+            "dstreputation": {
+              "type": "integer"
+            },
+            "crscore": {
+              "type": "integer"
+            },
+            "remip": {
+              "type": "ip"
+            }
+          }
+        }
+      }
+    }
+  }
+}

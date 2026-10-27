@@ -1,0 +1,23 @@
+{
+  "index_patterns": [
+    "fw-logs-*"
+  ],
+  "data_stream": {},
+  "priority": 220,
+  "composed_of": [
+    "fw-logs-mappings"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "30s",
+      "codec": "best_compression",
+      "index.lifecycle.name": "fw-logs-retention",
+      "index.mapping.ignore_malformed": true
+    }
+  },
+  "_meta": {
+    "description": "Logs do FortiGate (FortiAnalyzer → syslog-relay → Logstash). Dado pessoal: leitura só para soc_admin e soc_analyst."
+  }
+}

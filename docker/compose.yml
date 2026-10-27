@@ -18,12 +18,15 @@ services:
     environment:
       SOC_PUBLIC_DNS: ${SOC_PUBLIC_DNS:-}
       SOC_PUBLIC_IP: ${SOC_PUBLIC_IP:-}
+      # IP da VM pelo qual o FortiAnalyzer envia os logs (SAN do certificado do syslog-relay).
+      SOC_SYSLOG_IP: ${SOC_SYSLOG_IP:-}
     volumes:
       - certs:/usr/share/elasticsearch/config/certs
       - ca_private:/usr/share/elasticsearch/config/ca-private
       - certs_public:/export/ca
       - certs_es:/export/es01
       - certs_kibana:/export/kibana
+      - certs_syslog:/export/syslog
       - ../elasticsearch:/setup:ro
     logging: *logging
 
@@ -40,6 +43,9 @@ services:
       KIBANA_PASSWORD: ${KIBANA_PASSWORD:?}
       SOC_ES_LOGSTASH_USER: ${SOC_ES_LOGSTASH_USER:-soc_logstash}
       SOC_ES_LOGSTASH_PASSWORD: ${SOC_ES_LOGSTASH_PASSWORD:?}
+      # Leitura de fw-logs-* pelo coletor (fonte fwflows). Vazio: usuário não é criado.
+      SOC_ES_COLLECTOR_USER: ${SOC_ES_COLLECTOR_USER:-soc_collector_es}
+      SOC_ES_COLLECTOR_PASSWORD: ${SOC_ES_COLLECTOR_PASSWORD:-}
     volumes:
       - certs_public:/usr/share/elasticsearch/config/certs/ca:ro
       - ../elasticsearch:/setup:ro
@@ -181,10 +187,39 @@ services:
       retries: 40
     logging: *logging
 
+  # Recebe os logs do FortiAnalyzer (syslog TCP + TLS, RFC 6587) e entrega ao Logstash
+  # uma mensagem por linha pela rede interna. Só aceita os IPs de FW_SYSLOG_ALLOWED.
+  syslog-relay:
+    build:
+      context: ../syslog-relay
+    image: soc/syslog-relay:${SYSLOG_RELAY_VERSION:-1.0.0}
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+      logstash:
+        condition: service_healthy
+    environment:
+      FW_SYSLOG_ALLOWED: ${FW_SYSLOG_ALLOWED:-}
+      RELAY_CERT_FILE: /certs/syslog/syslog.crt
+      RELAY_KEY_FILE: /certs/syslog/syslog.key
+      RELAY_DOWNSTREAM_HOST: logstash
+      RELAY_DOWNSTREAM_PORT: "5514"
+    volumes:
+      - certs_syslog:/certs/syslog:ro
+    ports:
+      - ${FW_SYSLOG_BIND:-0.0.0.0}:6514:6514
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${SYSLOG_RELAY_MEM_LIMIT:-256m}
+    restart: unless-stopped
+    logging: *logging
+
   collector:
     build:
       context: ../collector
-    image: soc/collector:${COLLECTOR_VERSION:-0.4.0}
+    image: soc/collector:${COLLECTOR_VERSION:-0.5.0}
     environment:
       GRAPH_TENANT_ID: ${GRAPH_TENANT_ID:?defina GRAPH_TENANT_ID no .env}
       GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID:?defina GRAPH_CLIENT_ID no .env}
@@ -198,6 +233,11 @@ services:
       PGSSLMODE: ${SOC_PG_SSLMODE:-require}
       PGSSLROOTCERT_FILE: /app/pg-ca/ca.crt
       LOG_LEVEL: ${COLLECTOR_LOG_LEVEL:-info}
+      # Leitura dos logs da firewall (fonte fwflows), com a CA do Elasticsearch.
+      ES_URL: https://es01:9200
+      ES_USER: ${SOC_ES_COLLECTOR_USER:-soc_collector_es}
+      ES_PASSWORD_FILE: /run/secrets/es_collector_password
+      ES_CA_FILE: /app/es-ca/ca.crt
       # Proxy corporativo, se houver (Node 24 lê HTTPS_PROXY com NODE_USE_ENV_PROXY=1).
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-}
@@ -205,11 +245,13 @@ services:
     secrets:
       - graph_client_secret
       - pg_collector_password
+      - es_collector_password
     volumes:
       # Fontes e consultas podem ser ajustadas sem rebuild (reinicie o container).
       - ../collector/config:/app/config:ro
       - ../collector/queries:/app/queries:ro
       - ./certs/postgres:/app/pg-ca:ro
+      - certs_public:/app/es-ca:ro
     # Configuração antiga com require não tenta ler uma CA ainda não instalada.
     command:
       - /bin/sh
@@ -236,6 +278,9 @@ secrets:
     file: ./secrets/graph_client_secret
   pg_collector_password:
     file: ./secrets/pg_collector_password
+  # Mesma senha de SOC_ES_COLLECTOR_PASSWORD no .env (o setup cria o usuário com ela).
+  es_collector_password:
+    file: ./secrets/es_collector_password
 
 volumes:
   certs:
@@ -243,4 +288,5 @@ volumes:
   certs_public:
   certs_es:
   certs_kibana:
+  certs_syslog:
   kibana_data:
