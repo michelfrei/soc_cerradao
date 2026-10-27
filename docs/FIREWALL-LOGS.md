@@ -74,9 +74,10 @@ https/ssh/console (admin) ou ssl/ipsec (VPN).
 
 **Sessões abertas** são as que não têm fechamento. O coletor recalcula a cada 5 minutos os
 últimos 7 dias de logs; o painel não depende do seletor de tempo. Os estados:
-- **open:** aberta e com evento dentro do limite.
-- **stale** (sem fechamento registrado): aberta há mais de 72 h (VPN) ou 24 h (admin) sem
-  evento novo. Pode ter caído sem log; confira no FortiGate.
+- **open:** aberta e com evento dentro do limite. Sem o evento de abertura (sessão anterior à
+  coleta), o início vem da duração informada no `tunnel-stats`.
+- **stale** (sem fechamento registrado): aberta há mais de 2 h (VPN; a VPN SSL envia `tunnel-stats`
+  a cada ~10 min) ou 24 h (admin) sem evento novo. Pode ter caído sem log; confira no FortiGate.
 - **closed:** encerrada.
 - **unknown:** saiu da janela de 7 dias sem fechamento.
 

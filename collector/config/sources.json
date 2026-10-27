@@ -218,7 +218,7 @@
       "index": "fw-logs-fortigate",
       "lookbackHours": 168,
       "adminStaleHours": 24,
-      "vpnStaleHours": 72,
+      "vpnStaleHours": 2,
       "maxSessions": 20000,
       "retentionDays": 30
     }

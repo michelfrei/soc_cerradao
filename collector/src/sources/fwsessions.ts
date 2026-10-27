@@ -13,7 +13,7 @@ export const STATE_LABEL: Record<SessionState, string> = {
 };
 
 /** Campos lidos do último evento (e do último evento de abertura) de cada sessão. */
-const SOURCE_FIELDS = ['@timestamp', 'soc.fw.session.state', 'soc.fw.access.kind', 'soc.fw.access.channel', 'soc.fw.access.user',
+const SOURCE_FIELDS = ['@timestamp', 'event.duration', 'soc.fw.session.state', 'soc.fw.access.kind', 'soc.fw.access.channel', 'soc.fw.access.user',
   'source.ip', 'source.bytes', 'destination.bytes', 'fortinet.firewall.tunnelip', 'fortinet.firewall.vpntunnel', 'fortinet.firewall.profile'];
 
 export function sessionQuery(since: Date, now: Date, after?: Record<string, unknown>, size = 1000): Record<string, unknown> {
@@ -61,7 +61,13 @@ export function toSession(b: SessionBucket, now: Date, src: Pick<FwSessionsSourc
   const lastSeen = str(get(latest, '@timestamp'))!;
   const lastState = str(get(latest, 'soc.fw.session.state'));
   const openedAt = num(b.opened?.at?.value);
-  const startedAt = openedAt != null ? new Date(openedAt) : (num(b.first?.value) != null ? new Date(b.first!.value!) : null);
+  // Sem o evento de abertura na janela (sessão anterior ao início da coleta), o tunnel-stats
+  // e o tunnel-down trazem há quanto tempo o túnel está ativo (event.duration, em ns).
+  const elapsedNs = num(get(latest, 'event.duration'));
+  let startedAt: Date | null = null;
+  if (openedAt != null) startedAt = new Date(openedAt);
+  else if (elapsedNs != null) startedAt = new Date(Date.parse(lastSeen) - Math.round(elapsedNs / 1e6));
+  else if (num(b.first?.value) != null) startedAt = new Date(b.first!.value!);
   const staleHours = kind === 'admin' ? src.adminStaleHours : src.vpnStaleHours;
   let state: SessionState;
   if (lastState === 'close') state = 'closed';

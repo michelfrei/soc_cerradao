@@ -26,6 +26,14 @@ describe('estado da sessão', () => {
       source: { ip: '198.51.100.7' }, tunnel_ip: '10.212.134.200', started_at: '2026-10-27T13:00:00.000Z', duration_seconds: 7200 });
   });
 
+  it('sem evento de abertura, o início vem da duração do tunnel-stats', () => {
+    const stats = { '@timestamp': '2026-10-27T14:01:59.000Z', event: { duration: 21_028 * 1e9 },
+      soc: { fw: { session: { state: 'alive' }, access: { kind: 'vpn', channel: 'ssl', user: 'ana' } } } };
+    const d = toSession(bucket('vpn|FG1|5', stats), now, opts)!;
+    expect(d).toMatchObject({ state: 'open', started_at: '2026-10-27T08:11:31.000Z' });
+    expect(d.duration_seconds).toBe(Math.round((now.getTime() - Date.parse('2026-10-27T08:11:31.000Z')) / 1000));
+  });
+
   it('fechamento usa o último evento; dados da abertura preenchem o que falta', () => {
     const down = { '@timestamp': '2026-10-27T14:00:00.000Z', soc: { fw: { session: { state: 'close' }, access: { kind: 'vpn' } } },
       source: { bytes: 10 }, destination: { bytes: 20 } };

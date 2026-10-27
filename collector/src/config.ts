@@ -142,7 +142,8 @@ const FwSessionsSource = BaseSource.extend({
   // Janela consultada; não deve passar da retenção dos logs brutos (10 dias).
   lookbackHours: z.number().int().min(1).max(720).default(168),
   adminStaleHours: z.number().int().min(1).default(24),
-  vpnStaleHours: z.number().int().min(1).default(72),
+  // A VPN SSL envia tunnel-stats a cada ~10 min: 2 h sem evento já indica túnel perdido sem log.
+  vpnStaleHours: z.number().int().min(1).default(2),
   maxSessions: z.number().int().min(100).max(200_000).default(20_000),
   retentionDays: z.number().int().min(1).max(400).default(30),
 });
