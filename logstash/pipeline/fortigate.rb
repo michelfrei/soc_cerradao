@@ -111,7 +111,7 @@ def access(event, data)
     tunnel = data['tunneltype'].to_s.downcase
     kind = tunnel.start_with?('ssl') ? 'ssl' : (tunnel.include?('ipsec') || data['vpntunnel'] ? 'ipsec' : 'outro')
     user = data['user'] || data['xauthuser']
-    failed = VPN_FAILURES.include?(action) || %w[failure failed].include?(status)
+    failed = VPN_FAILURES.include?(action) || %w[failure failed negotiate_error].include?(status)
     event.set('[soc][fw][access][kind]', 'vpn')
     event.set('[soc][fw][access][channel]', kind)
     event.set('[soc][fw][access][user]', user) if user
@@ -268,7 +268,11 @@ test 'VPN SSL e IPsec: túnel abre e fecha pelo tunnelid; falha de login não vi
     [{ 'message' => base + 'action="tunnel-up" tunneltype="ssl-tunnel" tunnelid=77 remip=198.51.100.7 tunnelip=10.212.134.200 user="maria"' },
      { 'message' => base + 'action="tunnel-down" tunneltype="ssl-tunnel" tunnelid=77 remip=198.51.100.7 user="maria" duration=3600 sentbyte=10 rcvdbyte=20' },
      { 'message' => base + 'action="ssl-login-fail" tunneltype="ssl-web" remip=198.51.100.8 user="joao" reason="sslvpn_login_permission_denied"' },
-     { 'message' => base + 'action="tunnel-up" tunneltype="ipsec" vpntunnel="FILIAL" remip=198.51.100.9 xauthuser="pedro"' }]
+     { 'message' => base + 'action="tunnel-up" tunneltype="ipsec" vpntunnel="FILIAL" remip=198.51.100.9 xauthuser="pedro"' },
+     { 'message' => base + 'action="negotiate" status="negotiate_error" vpntunnel="FILIAL" remip=198.51.100.9' }]
+  end
+  expect('erro de negociação IPsec é falha, sem sessão') do |events|
+    events[4].get('[soc][fw][access][outcome]') == 'failure' && events[4].get('[soc][fw][session][id]').nil?
   end
   expect('estado, tipo e usuário') do |events|
     up, down, fail, ipsec = events
