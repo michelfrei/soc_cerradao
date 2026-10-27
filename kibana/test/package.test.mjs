@@ -39,8 +39,8 @@ test('all saved-object IDs and references resolve, including dashboard panel ref
   }
 });
 
-test('eleven dashboards have valid nonoverlapping panel layouts', () => {
-  assert.equal(dashboards.length, 11);
+test('twelve dashboards have valid nonoverlapping panel layouts', () => {
+  assert.equal(dashboards.length, 12);
   for (const d of dashboards) {
     const panels = JSON.parse(d.attributes.panelsJSON);
     for (const [i, p] of panels.entries()) {
@@ -287,4 +287,17 @@ test('firewall dashboard reads its own data views and keeps raw logs out of the 
     const reads = role.elasticsearch.indices.some((p) => p.names.includes('fw-logs-*'));
     assert.equal(reads, ['soc_admin.json', 'soc_analyst.json'].includes(file), file);
   }
+});
+
+test('firewall access dashboard: open sessions are timeless current state; access panels read fw-logs events', () => {
+  assert.equal(get('soc-fw-sessions-state').attributes.title, 'soc-fw-sessions');
+  assert.equal(get('soc-fw-sessions-state').attributes.timeFieldName, undefined);
+  const d = get('soc-dashboard-firewall-acessos');
+  for (const r of d.references.filter((r) => r.type === 'lens')) {
+    const o = get(r.id);
+    const view = o.references[0].id;
+    assert.ok(['fw-logs', 'soc-fw-sessions-state'].includes(view), o.id);
+    if (view === 'fw-logs') assert.match(o.attributes.state.query.query, /event\.dataset : "fortigate\.event" and soc\.fw\.access\.kind/);
+  }
+  assert.match(get('soc-fwa-vpn-open').attributes.state.query.query, /state : "open"/);
 });

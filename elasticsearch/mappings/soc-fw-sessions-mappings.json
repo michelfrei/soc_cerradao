@@ -1,0 +1,82 @@
+{
+  "dynamic": false,
+  "properties": {
+    "@timestamp": {
+      "type": "date"
+    },
+    "schema_version": {
+      "type": "keyword"
+    },
+    "session_id": {
+      "type": "keyword"
+    },
+    "kind": {
+      "type": "keyword"
+    },
+    "channel": {
+      "type": "keyword"
+    },
+    "state": {
+      "type": "keyword"
+    },
+    "state_label": {
+      "type": "keyword"
+    },
+    "user": {
+      "type": "keyword"
+    },
+    "source": {
+      "properties": {
+        "ip": {
+          "type": "ip"
+        }
+      }
+    },
+    "tunnel_ip": {
+      "type": "ip"
+    },
+    "vpn_tunnel": {
+      "type": "keyword"
+    },
+    "profile": {
+      "type": "keyword"
+    },
+    "started_at": {
+      "type": "date"
+    },
+    "last_seen": {
+      "type": "date"
+    },
+    "ended_at": {
+      "type": "date"
+    },
+    "duration_seconds": {
+      "type": "long"
+    },
+    "bytes_sent": {
+      "type": "long"
+    },
+    "bytes_received": {
+      "type": "long"
+    },
+    "computed_at": {
+      "type": "date"
+    },
+    "event": {
+      "properties": {
+        "kind": {
+          "type": "keyword"
+        },
+        "module": {
+          "type": "keyword"
+        },
+        "dataset": {
+          "type": "keyword"
+        },
+        "ingested": {
+          "type": "date"
+        }
+      }
+    }
+  }
+}

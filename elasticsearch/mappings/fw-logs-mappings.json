@@ -45,6 +45,9 @@
         },
         "ingested": {
           "type": "date"
+        },
+        "outcome": {
+          "type": "keyword"
         }
       }
     },
@@ -234,6 +237,32 @@
           "properties": {
             "verdict": {
               "type": "keyword"
+            },
+            "access": {
+              "properties": {
+                "kind": {
+                  "type": "keyword"
+                },
+                "user": {
+                  "type": "keyword"
+                },
+                "channel": {
+                  "type": "keyword"
+                },
+                "outcome": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "session": {
+              "properties": {
+                "id": {
+                  "type": "keyword"
+                },
+                "state": {
+                  "type": "keyword"
+                }
+              }
             }
           }
         }
@@ -334,6 +363,24 @@
               "type": "integer"
             },
             "remip": {
+              "type": "ip"
+            },
+            "tunnelid": {
+              "type": "keyword"
+            },
+            "vpntunnel": {
+              "type": "keyword"
+            },
+            "xauthuser": {
+              "type": "keyword"
+            },
+            "method": {
+              "type": "keyword"
+            },
+            "sn": {
+              "type": "keyword"
+            },
+            "tunnelip": {
               "type": "ip"
             }
           }

@@ -223,6 +223,11 @@ FW_MAPPINGS="$SETUP/mappings/fw-logs-mappings.json"
 { printf '{"template":{"mappings":'; cat "$FW_MAPPINGS"; printf '}}'; } > "$tmp"
 es PUT /_component_template/fw-logs-mappings --data-binary @"$tmp" >/dev/null
 
+echo "Component template: soc-fw-sessions-mappings"
+FWSESSIONS_MAPPINGS="$SETUP/mappings/soc-fw-sessions-mappings.json"
+{ printf '{"template":{"mappings":'; cat "$FWSESSIONS_MAPPINGS"; printf '}}'; } > "$tmp"
+es PUT /_component_template/soc-fw-sessions-mappings --data-binary @"$tmp" >/dev/null
+
 echo "Component template: soc-fw-flows-mappings"
 FWFLOWS_MAPPINGS="$SETUP/mappings/soc-fw-flows-mappings.json"
 { printf '{"template":{"mappings":'; cat "$FWFLOWS_MAPPINGS"; printf '}}'; } > "$tmp"
@@ -230,10 +235,14 @@ es PUT /_component_template/soc-fw-flows-mappings --data-binary @"$tmp" >/dev/nu
 
 # Índices já existentes recebem os campos novos (somente inclusão; o ES recusa
 # mudança de tipo). Documentos antigos só ganham os campos novos se republicados.
-# soc-insights, soc-windows-updates* e soc-fw-flows-* têm mapeamento próprio e ficam de fora.
-if es GET '/_cat/indices/soc-*,-soc-insights,-soc-windows-updates*,-soc-fw-flows-*?h=index' 2>/dev/null | grep -q .; then
+# soc-insights, soc-windows-updates*, soc-fw-flows-* e soc-fw-sessions têm mapeamento próprio e ficam de fora.
+if es GET '/_cat/indices/soc-*,-soc-insights,-soc-windows-updates*,-soc-fw-flows-*,-soc-fw-sessions?h=index' 2>/dev/null | grep -q .; then
     echo "Atualizando mapeamento dos índices soc-* existentes"
-    es PUT '/soc-*,-soc-insights,-soc-windows-updates*,-soc-fw-flows-*/_mapping' --data-binary @"$MAPPINGS" >/dev/null
+    es PUT '/soc-*,-soc-insights,-soc-windows-updates*,-soc-fw-flows-*,-soc-fw-sessions/_mapping' --data-binary @"$MAPPINGS" >/dev/null
+fi
+if es GET '/_cat/indices/soc-fw-sessions?h=index' 2>/dev/null | grep -q .; then
+    echo "Atualizando mapeamento de soc-fw-sessions"
+    es PUT '/soc-fw-sessions/_mapping' --data-binary @"$FWSESSIONS_MAPPINGS" >/dev/null
 fi
 if es GET '/_cat/indices/soc-fw-flows-*?h=index' 2>/dev/null | grep -q .; then
     echo "Atualizando mapeamento de soc-fw-flows-*"
@@ -264,6 +273,10 @@ done
 if ! es GET '/_cat/indices/soc-insights?h=index' 2>/dev/null | grep -q .; then
     echo "Criando índice vazio soc-insights"
     es PUT /soc-insights >/dev/null
+fi
+if ! es GET '/_cat/indices/soc-fw-sessions?h=index' 2>/dev/null | grep -q .; then
+    echo "Criando índice vazio soc-fw-sessions"
+    es PUT /soc-fw-sessions >/dev/null
 fi
 if ! es GET '/_cat/indices/soc-windows-updates?h=index' 2>/dev/null | grep -q .; then
     echo "Criando índice vazio soc-windows-updates"

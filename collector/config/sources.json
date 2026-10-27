@@ -209,6 +209,18 @@
       "serverCidrs": ["172.16.159.0/24"],
       "maxBucketsPerHour": 50000,
       "retentionDays": 30
+    },
+    {
+      "name": "fwsessions.fortigate",
+      "type": "fwsessions",
+      "enabled": false,
+      "intervalSeconds": 300,
+      "index": "fw-logs-fortigate",
+      "lookbackHours": 168,
+      "adminStaleHours": 24,
+      "vpnStaleHours": 72,
+      "maxSessions": 20000,
+      "retentionDays": 30
     }
   ]
 }

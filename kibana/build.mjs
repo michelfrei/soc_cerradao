@@ -32,6 +32,7 @@ const DATA_VIEWS = [
   // Logs brutos da firewall: dado pessoal, leitura só para soc_admin e soc_analyst.
   { id: 'fw-logs', title: 'fw-logs-*', name: 'SOC - Firewall (logs do FortiGate)' },
   { id: 'soc-fw-flows', title: 'soc-fw-flows-*', name: 'SOC - Firewall (agregados por hora)' },
+  { id: 'soc-fw-sessions-state', title: 'soc-fw-sessions', name: 'SOC - Firewall (sessões de VPN e administração)', timeless: true },
 ];
 
 const dataViewObjects = DATA_VIEWS.map((d) => ({
@@ -59,7 +60,7 @@ const TERM_TYPES = {
   'source.ip': 'ip', 'destination.ip': 'ip',
   'soc.network.local_ip': 'ip', 'soc.network.remote_ip': 'ip',
   'soc.network.local_port': 'number', 'soc.network.remote_port': 'number',
-  'destination.port': 'number',
+  'destination.port': 'number', 'tunnel_ip': 'ip',
 };
 
 const col = {
@@ -314,6 +315,7 @@ const NAV_ITEMS = [
   ['soc-dashboard-processos-rede', 'Processos e conexões'], ['soc-dashboard-exposicao', 'Exposição e proteção'],
   ['soc-dashboard-acessos-servidores', 'Acessos aos servidores'], ['soc-dashboard-remediacao', 'Remediação'],
   ['soc-dashboard-windows-updates', 'Atualização do Windows'], ['soc-dashboard-firewall', 'Firewall'],
+  ['soc-dashboard-firewall-acessos', 'Firewall: acessos e VPN'],
 ];
 const nav = () => markdown(NAV_ITEMS.map(([id, title]) => `[${title}](/s/soc/app/dashboards#/view/${id})`).join(' · ') +
   '\n\n**Escopo:** nome contém srv ou fisico, exclui note ou micro. Para correlacionar, filtre por **host.id** e **soc.identity.correlation_key**. ' +
@@ -799,8 +801,56 @@ const fwSearch = search('soc-search-firewall', 'Logs da firewall — sessões de
     'fortinet.firewall.utmaction', 'fortinet.firewall.catdesc', 'rule.name', 'soc.fw.verdict', 'network.bytes']);
 detailSearches.push(fwSearch);
 
+// Firewall: acesso administrativo, VPN e sessões abertas ------------------------------------
+// soc.fw.access.user é a conta do FortiGate (local/LDAP), não a identidade canônica do Defender.
+
+const FW_EVENT = 'event.dataset : "fortigate.event"';
+const ADMIN = `${FW_EVENT} and soc.fw.access.kind : "admin"`;
+const ADMIN_LOGIN = `${ADMIN} and event.action : "login"`;
+const VPN = `${FW_EVENT} and soc.fw.access.kind : "vpn"`;
+const VPN_RESULT = `${VPN} and soc.fw.access.outcome : *`;
+const SESSION_OPEN = 'state : ("open" or "stale")';
+const fwa = {
+  vpnOpen: metric('soc-fwa-vpn-open', 'VPN conectadas agora', 'soc-fw-sessions-state', 'kind : "vpn" and state : "open"'),
+  adminOpen: metric('soc-fwa-admin-open', 'Administradores conectados agora', 'soc-fw-sessions-state', 'kind : "admin" and state : "open"'),
+  stale: metric('soc-fwa-stale', 'Sem fechamento registrado', 'soc-fw-sessions-state', 'state : "stale"'),
+  openTable: table('soc-fwa-open-table', 'Sessões abertas — usuário, origem e início', 'soc-fw-sessions-state', SESSION_OPEN, [
+    ['user', 'Usuário', 100], ['kind', 'Tipo', 1], ['channel', 'Canal', 1], ['source.ip', 'Origem', 1], ['tunnel_ip', 'IP do túnel', 1],
+    ['state_label', 'Situação', 1],
+  ], [['start', col.max('started_at', 'Início', 'date')], ['dur', col.max('duration_seconds', 'Duração (s)')]], 'start'),
+  adminOk: metric('soc-fwa-admin-ok', 'Logins administrativos com sucesso', 'fw-logs', `${ADMIN_LOGIN} and soc.fw.access.outcome : "success"`),
+  adminFail: metric('soc-fwa-admin-fail', 'Falhas de login administrativo', 'fw-logs', `${ADMIN_LOGIN} and soc.fw.access.outcome : "failure"`),
+  adminFailSources: metric('soc-fwa-admin-fail-sources', 'Origens com falha de login', 'fw-logs', `${ADMIN_LOGIN} and soc.fw.access.outcome : "failure"`,
+    col.unique('source.ip', 'Origens com falha de login')),
+  adminTimeline: timeline('soc-fwa-admin-timeline', 'Logins administrativos no tempo por resultado', 'fw-logs', ADMIN_LOGIN, 'soc.fw.access.outcome', 'Resultado', 2),
+  adminFailTable: table('soc-fwa-admin-fail-table', 'Falhas de login administrativo — conta, origem e motivo', 'fw-logs',
+    `${ADMIN_LOGIN} and soc.fw.access.outcome : "failure"`, [
+      ['soc.fw.access.user', 'Conta', 50], ['source.ip', 'Origem', 3], ['soc.fw.access.channel', 'Canal', 1], ['fortinet.firewall.reason', 'Motivo', 1],
+    ]),
+  adminOkTable: table('soc-fwa-admin-ok-table', 'Logins administrativos com sucesso — conta, origem e perfil', 'fw-logs',
+    `${ADMIN_LOGIN} and soc.fw.access.outcome : "success"`, [
+      ['soc.fw.access.user', 'Conta', 50], ['source.ip', 'Origem', 3], ['soc.fw.access.channel', 'Canal', 1], ['fortinet.firewall.profile', 'Perfil', 1],
+    ]),
+  vpnUp: metric('soc-fwa-vpn-up', 'Túneis VPN estabelecidos', 'fw-logs', `${VPN} and event.action : "tunnel-up"`),
+  vpnFail: metric('soc-fwa-vpn-fail', 'Falhas de conexão VPN', 'fw-logs', `${VPN} and soc.fw.access.outcome : "failure"`),
+  vpnUsers: metric('soc-fwa-vpn-users', 'Usuários de VPN distintos', 'fw-logs', `${VPN} and event.action : "tunnel-up"`,
+    col.unique('soc.fw.access.user', 'Usuários de VPN distintos')),
+  vpnTimeline: timeline('soc-fwa-vpn-timeline', 'Conexões VPN no tempo por resultado', 'fw-logs', VPN_RESULT, 'soc.fw.access.outcome', 'Resultado', 2),
+  vpnTable: table('soc-fwa-vpn-table', 'Conexões VPN — usuário, origem e tipo', 'fw-logs', `${VPN} and event.action : "tunnel-up"`, [
+    ['soc.fw.access.user', 'Usuário', 100], ['source.ip', 'Origem', 3], ['soc.fw.access.channel', 'Tipo', 1],
+  ]),
+  vpnFailTable: table('soc-fwa-vpn-fail-table', 'Falhas de VPN — usuário, origem e motivo', 'fw-logs', `${VPN} and soc.fw.access.outcome : "failure"`, [
+    ['soc.fw.access.user', 'Usuário', 50], ['source.ip', 'Origem', 3], ['fortinet.firewall.reason', 'Motivo', 1],
+  ]),
+};
+fwa.openTable.attributes.state.datasourceStates.formBased.layers[LAYER].columns.m.label = 'Documentos (1 por sessão)';
+const fwaSearch = search('soc-search-firewall-acessos', 'Eventos de acesso — login administrativo e VPN', 'fw-logs', `${FW_EVENT} and soc.fw.access.kind : *`,
+  ['soc.fw.access.kind', 'event.action', 'soc.fw.access.outcome', 'soc.fw.access.user', 'source.ip', 'soc.fw.access.channel',
+    'fortinet.firewall.tunnelip', 'fortinet.firewall.reason', 'message']);
+detailSearches.push(fwaSearch);
+
 const lensObjects = [...Object.values(ov), ...Object.values(ac), ...Object.values(srv), ...Object.values(asr), ...Object.values(cap),
-  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv), ...Object.values(rem), ...Object.values(wu), ...Object.values(fw)];
+  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv), ...Object.values(rem), ...Object.values(wu), ...Object.values(fw), ...Object.values(fwa)];
 const dashboards = [
   dashboard('soc-dashboard-overview', 'SOC - Visão operacional', known, [
     [nav(), 0, 0, 48, 5], [markdown(`**${known}** Os incidentes/alertas Defender abrangem o tenant; o escopo de servidores é aplicado aos eventos e ao inventário. Alertas Elastic são detecções executadas neste espaço SOC e obedecem ao período selecionado.`), 0, 5, 48, 5],
@@ -960,6 +1010,31 @@ dashboards.push(dashboard('soc-dashboard-firewall', 'SOC - Firewall',
   ], 'now-24h', [
     ['source.ip', 'Origem', 'fw-logs'], ['destination.ip', 'Destino', 'fw-logs'], ['rule.name', 'Política', 'fw-logs'],
     ['soc.fw.verdict', 'Veredito', 'fw-logs'],
+  ]));
+
+dashboards.push(dashboard('soc-dashboard-firewall-acessos', 'SOC - Firewall: acessos e VPN',
+  'Logins administrativos no FortiGate, conexões VPN e sessões abertas agora.', [
+    [nav(), 0, 0, 48, 5],
+    [markdown('**Sessões abertas agora** (sem corte pelo seletor de tempo): túneis VPN e logins administrativos sem fechamento registrado, ' +
+      'recalculados pelo coletor a cada 5 minutos a partir dos últimos 7 dias de logs. **Sem fechamento registrado** = aberta há mais de ' +
+      '72 h (VPN) ou 24 h (administração) sem evento novo: pode ter caído sem log; confira no FortiGate. ' +
+      'A tabela de sessões de tráfego da firewall não vem nos logs e não aparece aqui.\n\n' +
+      '**Contas** são as do FortiGate (local ou LDAP), sem correlação com a identidade do Defender. O acesso do Claude (claude/soc_readonly) ' +
+      'e do fgt-gateway também aparece como login administrativo por SSH.'), 0, 5, 48, 7],
+    [fwa.vpnOpen, 0, 12, 16, 8], [fwa.adminOpen, 16, 12, 16, 8], [fwa.stale, 32, 12, 16, 8],
+    [fwa.openTable, 0, 20, 48, 18],
+    [markdown('### Acesso administrativo ao FortiGate\nLogins pela interface web (https), SSH e console. Falhas de contas inexistentes ou ' +
+      'vindas da internet indicam tentativa de acesso indevido.'), 0, 38, 48, 4],
+    [fwa.adminOk, 0, 42, 16, 8], [fwa.adminFail, 16, 42, 16, 8], [fwa.adminFailSources, 32, 42, 16, 8],
+    [fwa.adminTimeline, 0, 50, 48, 13],
+    [fwa.adminFailTable, 0, 63, 24, 18], [fwa.adminOkTable, 24, 63, 24, 18],
+    [markdown('### VPN\nTúneis SSL e IPsec. Falha = login recusado ou negociação com erro. Túnel IPsec entre sites aparece sem usuário.'), 0, 81, 48, 4],
+    [fwa.vpnUp, 0, 85, 16, 8], [fwa.vpnFail, 16, 85, 16, 8], [fwa.vpnUsers, 32, 85, 16, 8],
+    [fwa.vpnTimeline, 0, 93, 48, 13],
+    [fwa.vpnTable, 0, 106, 24, 18], [fwa.vpnFailTable, 24, 106, 24, 18],
+    [fwaSearch, 0, 124, 48, 22],
+  ], 'now-7d', [
+    ['soc.fw.access.user', 'Conta / usuário', 'fw-logs'], ['source.ip', 'Origem', 'fw-logs'], ['soc.fw.access.outcome', 'Resultado', 'fw-logs'],
   ]));
 
 // Regras de detecção ---------------------------------------------------------------------

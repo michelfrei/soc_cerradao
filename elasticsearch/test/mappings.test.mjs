@@ -105,3 +105,21 @@ test('firewall hourly aggregates have their own mapping and long-term history IL
   assert.deepEqual(template.composed_of, ['soc-fw-flows-mappings']);
   assert.equal(template.template.settings['index.lifecycle.name'], 'soc-history-retention');
 });
+
+test('firewall sessions: current-state index without ILM and typed session fields', () => {
+  const m = JSON.parse(readFileSync(new URL('../mappings/soc-fw-sessions-mappings.json', import.meta.url), 'utf8'));
+  const f = (path) => path.split('.').reduce((node, name) => node?.properties?.[name], m);
+  assert.equal(m.dynamic, false);
+  for (const name of ['session_id', 'kind', 'state', 'user', 'channel']) assert.equal(f(name)?.type, 'keyword', name);
+  for (const name of ['started_at', 'last_seen', 'ended_at']) assert.equal(f(name)?.type, 'date', name);
+  assert.equal(f('source.ip')?.type, 'ip');
+  assert.equal(f('tunnel_ip')?.type, 'ip');
+  const template = JSON.parse(readFileSync(new URL('../templates/index-soc-fw-sessions.json', import.meta.url), 'utf8'));
+  assert.deepEqual(template.index_patterns, ['soc-fw-sessions']);
+  assert.equal(template.template.settings['index.lifecycle.name'], undefined);
+  const raw = JSON.parse(readFileSync(new URL('../mappings/fw-logs-mappings.json', import.meta.url), 'utf8'));
+  const r = (path) => path.split('.').reduce((node, name) => node?.properties?.[name], raw);
+  for (const name of ['soc.fw.session.id', 'soc.fw.session.state', 'soc.fw.access.kind', 'soc.fw.access.user', 'soc.fw.access.outcome']) {
+    assert.equal(r(name)?.type, 'keyword', name);
+  }
+});

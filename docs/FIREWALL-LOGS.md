@@ -18,7 +18,9 @@ VM-Docker: syslog-relay (TLS, RFC 6587, só o IP do FortiAnalyzer)
 | `logstash/pipeline/fortigate.conf` + `fortigate.rb` | Logstash, porta 5514 só na rede interna | Interpreta chave=valor, converte para ECS, calcula `soc.fw.verdict` e `network.direction` e descarta campos redundantes |
 | `fw-logs-fortigate` | Elasticsearch | Data stream com mapeamento explícito, `best_compression`, rollover diário e exclusão após 10 dias (30 após ampliar o disco) |
 | Fonte `fwflows.fortigate` | Coletor | Agrega cada hora no Elasticsearch (por origem, e fluxos de/para 172.16.159.0/24), grava em `soc.fw_flow_hourly` (30 dias) e publica `soc-fw-flows-*` (395 dias) |
+| Fonte `fwsessions.fortigate` | Coletor | A cada 5 min, monta o estado das sessões de VPN e de administração (últimos 7 dias de logs), grava em `soc.fw_session_state` e publica `soc-fw-sessions` |
 | Dashboard **SOC - Firewall** | Kibana | Bloqueios, políticas, entradas da internet, países, origens e fluxos dos servidores |
+| Dashboard **SOC - Firewall: acessos e VPN** | Kibana | Sessões abertas agora, logins administrativos (sucesso e falha) e conexões VPN |
 
 ## Dimensionamento (amostra de 27/10/2026)
 
@@ -57,6 +59,33 @@ Ficam de fora: `id`, `itime`, `dtime`, `date`/`time` (já em `@timestamp`), `log
 original. Para guardar mais um campo, inclua-o em `FIELDS` (`fortigate.rb`) e no mapeamento
 `fw-logs-mappings.json`.
 
+## Acessos, VPN e sessões abertas
+
+O Logstash marca os eventos de acesso (tipo `event`) com campos próprios:
+
+| Evento do FortiOS | `soc.fw.access.kind` | Sessão (`soc.fw.session.id` / `state`) |
+|---|---|---|
+| `subtype=system`, `action=login`/`logout` (logids 32001 sucesso, 32002 falha, 32003 logout) | `admin` | `admin|<devid>|<sn>`: o `sn` liga o login ao logout. Só login com sucesso abre. |
+| `subtype=vpn`, `tunnel-up` / `tunnel-down` / `tunnel-stats` | `vpn` | `vpn|<devid>|<tunnelid>` (IPsec sem tunnelid: `vpntunnel|remip`); abre, fecha, renova |
+| `subtype=vpn`, `ssl-login-fail` ou status de falha | `vpn` | não abre sessão; `soc.fw.access.outcome: failure` |
+
+`soc.fw.access.user` é a conta do FortiGate (`user` ou `xauthuser`); `soc.fw.access.channel` é
+https/ssh/console (admin) ou ssl/ipsec (VPN).
+
+**Sessões abertas** são as que não têm fechamento. O coletor recalcula a cada 5 minutos os
+últimos 7 dias de logs; o painel não depende do seletor de tempo. Os estados:
+- **open:** aberta e com evento dentro do limite.
+- **stale** (sem fechamento registrado): aberta há mais de 72 h (VPN) ou 24 h (admin) sem
+  evento novo. Pode ter caído sem log; confira no FortiGate.
+- **closed:** encerrada.
+- **unknown:** saiu da janela de 7 dias sem fechamento.
+
+O total de sessões de tráfego da firewall (tabela de sessões) não vem nos logs e não aparece
+aqui. Se precisar, dá para consultar `get system session status` pelo fgt-gateway.
+
+Para os painéis de acesso, o FortiAnalyzer precisa encaminhar os logs do tipo **event**
+(subtipos system e vpn), além de traffic.
+
 ## Dado pessoal (LGPD)
 
 Usuário, MAC e sites acessados identificam pessoas. Por isso:
@@ -89,13 +118,14 @@ editor, sem colar em chat:
 - `SOC_SYSLOG_IP=172.16.159.60` vai no certificado do relay.
 - `COLLECTOR_VERSION=0.5.0`.
 
-## 2. VM-PG: migração 007
+## 2. VM-PG: migrações 007 e 008
 
 ```bash
 sudo bash postgres/migrate.sh
 ```
 
-Cria `soc.fw_flow_hourly` e permite a entidade `fwflow` na publicação.
+A 007 cria `soc.fw_flow_hourly` e a 008 cria `soc.fw_session_state`. As duas permitem as
+entidades `fwflow` e `fwsession` na publicação.
 
 ## 3. VM-Docker: certificado, Elasticsearch, Logstash, relay e coletor
 
@@ -141,7 +171,8 @@ sudo iptables -I DOCKER-USER -p tcp --dport 6514 ! -s <IP_DO_FAZ> -j DROP
 - **Name:** `soc-elastic`. **Remote Server Type:** Syslog.
 - **Server Address:** 172.16.159.60. **Server Port:** 6514. **Reliable Connection:** ligado.
 - **Device Filter:** o FortiGate `CERRADAO_FG100F`.
-- **Log Filters:** tipo traffic, mais UTM e event se quiser. Comece com traffic + event.
+- **Log Filters:** tipos **traffic** e **event**. O event traz os logins administrativos e a
+  VPN, usados no painel de acessos. UTM é opcional.
 
 O TLS (`fwd-secure`) só se liga pela CLI. Faça os ajustes na mesma entrada:
 
@@ -193,11 +224,22 @@ No PostgreSQL, como `soc_diag`:
 SELECT kind, count(*), min(hour), max(hour) FROM soc.fw_flow_hourly GROUP BY kind;
 ```
 
+## 7. Ligar o estado das sessões (coletor)
+
+Depois da migração 008, troque `"enabled": false` por `true` na fonte
+`fwsessions.fortigate` em `collector/config/sources.json` e reinicie o coletor. A cada
+5 minutos, o painel **SOC - Firewall: acessos e VPN** passa a mostrar as sessões abertas.
+No PostgreSQL, como `soc_diag`:
+
+```sql
+SELECT kind, state, count(*) FROM soc.fw_session_state GROUP BY kind, state ORDER BY 1, 2;
+```
+
 ## Reversão
 
 - **Parar a ingestão:** desative a entrada no FortiAnalyzer ou
   `docker compose stop syslog-relay`. O FAZ mantém o que não conseguiu enviar na própria fila.
-- **Agregados:** `enabled: false` na fonte e reinicie o coletor.
-- A migração 007 é aditiva e pode ficar.
+- **Agregados e sessões:** `enabled: false` nas fontes `fwflows.fortigate` e `fwsessions.fortigate` e reinicie o coletor.
+- As migrações 007 e 008 são aditivas e podem ficar.
 - Não apague o data stream sem decidir a retenção. Para remover os dados brutos, apague
   `fw-logs-fortigate` no Kibana (Index Management), com confirmação de quem responde pelo SOC.

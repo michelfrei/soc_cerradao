@@ -134,6 +134,19 @@ const FwFlowsSource = BaseSource.extend({
   retentionDays: z.number().int().min(1).max(400).default(30),
 });
 
+// Estado atual das sessões de VPN e de administração do FortiGate (fw-logs-fortigate).
+const FwSessionsSource = BaseSource.extend({
+  type: z.literal('fwsessions'),
+  intervalSeconds: z.number().int().min(60).default(300),
+  index: z.string().regex(/^[a-z0-9_.*-]+$/).default('fw-logs-fortigate'),
+  // Janela consultada; não deve passar da retenção dos logs brutos (10 dias).
+  lookbackHours: z.number().int().min(1).max(720).default(168),
+  adminStaleHours: z.number().int().min(1).default(24),
+  vpnStaleHours: z.number().int().min(1).default(72),
+  maxSessions: z.number().int().min(100).max(200_000).default(20_000),
+  retentionDays: z.number().int().min(1).max(400).default(30),
+});
+
 const ExpectedAsset = z.object({
   name: z.string().trim().min(1),
   id: z.string().trim().min(1).optional(),
@@ -159,7 +172,7 @@ export function parseAssets(raw: unknown): ExpectedAssetConfig[] {
 }
 
 const SourcesFile = z.object({
-  sources: z.array(z.discriminatedUnion('type', [ObjectSource, HuntingSource, InventorySource, SnapshotSource, InsightsSource, MsrcSource, WinUpdatesSource, FwFlowsSource])),
+  sources: z.array(z.discriminatedUnion('type', [ObjectSource, HuntingSource, InventorySource, SnapshotSource, InsightsSource, MsrcSource, WinUpdatesSource, FwFlowsSource, FwSessionsSource])),
 });
 
 export type ObjectSourceConfig = z.infer<typeof ObjectSource>;
@@ -170,8 +183,9 @@ export type InsightsSourceConfig = z.infer<typeof InsightsSource>;
 export type MsrcSourceConfig = z.infer<typeof MsrcSource>;
 export type WinUpdatesSourceConfig = z.infer<typeof WinUpdatesSource>;
 export type FwFlowsSourceConfig = z.infer<typeof FwFlowsSource>;
+export type FwSessionsSourceConfig = z.infer<typeof FwSessionsSource>;
 export type SourceConfig = ObjectSourceConfig | HuntingSourceConfig | InventorySourceConfig | SnapshotSourceConfig | InsightsSourceConfig
-  | MsrcSourceConfig | WinUpdatesSourceConfig | FwFlowsSourceConfig;
+  | MsrcSourceConfig | WinUpdatesSourceConfig | FwFlowsSourceConfig | FwSessionsSourceConfig;
 
 export type GraphCredential =
   | { kind: 'secret'; clientSecret: string }
@@ -312,8 +326,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (e.ES_URL && e.ES_PASSWORD_FILE) {
     elastic = { url: e.ES_URL, user: e.ES_USER, password: readSecretFile(e.ES_PASSWORD_FILE, 'senha do Elasticsearch'),
       ...(e.ES_CA_FILE ? { ca: readFileSync(e.ES_CA_FILE, 'utf8') } : {}), requestTimeoutMs: e.ES_REQUEST_TIMEOUT_MS };
-  } else if (sources.some((s) => s.type === 'fwflows' && s.enabled)) {
-    throw new Error('fonte fwflows ligada sem ES_URL e ES_PASSWORD_FILE');
+  } else if (sources.some((s) => (s.type === 'fwflows' || s.type === 'fwsessions') && s.enabled)) {
+    throw new Error('fonte da firewall ligada sem ES_URL e ES_PASSWORD_FILE');
   }
 
   return {

@@ -1,0 +1,19 @@
+{
+  "index_patterns": [
+    "soc-fw-sessions"
+  ],
+  "priority": 210,
+  "composed_of": [
+    "soc-fw-sessions-mappings"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "30s"
+    }
+  },
+  "_meta": {
+    "description": "Estado atual das sessões de VPN e de administração do FortiGate (ID = soc.fw.session.id), calculado pelo coletor."
+  }
+}

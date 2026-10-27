@@ -33,6 +33,9 @@ FIELDS = {
   'eventtype' => '[fortinet][firewall][eventtype]', 'profile' => '[fortinet][firewall][profile]',
   'ui' => '[fortinet][firewall][ui]', 'status' => '[fortinet][firewall][status]', 'reason' => '[fortinet][firewall][reason]',
   'tunneltype' => '[fortinet][firewall][tunneltype]', 'remip' => '[fortinet][firewall][remip]',
+  'tunnelid' => '[fortinet][firewall][tunnelid]', 'tunnelip' => '[fortinet][firewall][tunnelip]',
+  'vpntunnel' => '[fortinet][firewall][vpntunnel]', 'xauthuser' => '[fortinet][firewall][xauthuser]',
+  'method' => '[fortinet][firewall][method]', 'sn' => '[fortinet][firewall][sn]',
 }.freeze
 
 PROTOCOLS = { 1 => 'icmp', 6 => 'tcp', 17 => 'udp', 47 => 'gre', 50 => 'esp', 58 => 'ipv6-icmp', 132 => 'sctp' }.freeze
@@ -75,6 +78,57 @@ def direction(src_role, dst_role)
   return 'inbound' if src_role == 'wan' && dst_role != 'wan'
   return 'internal' if src_role != 'wan' && dst_role != 'wan' && src_role != 'undefined' && dst_role != 'undefined'
   'unknown'
+end
+
+# Acesso administrativo (login/logout no FortiGate) e VPN. soc.fw.session.id liga a
+# abertura ao fechamento (sn do login admin, tunnelid da VPN) para o estado das sessões
+# calculado pelo coletor (fwsessions).
+VPN_FAILURES = %w[ssl-login-fail negotiate-error tunnel-fail].freeze
+
+def access(event, data)
+  return unless data['type'] == 'event'
+  action = data['action'].to_s.downcase
+  status = data['status'].to_s.downcase
+  devid = data['devid']
+  if data['subtype'] == 'system' && %w[login logout].include?(action) && data['user']
+    ok = status == 'success'
+    channel = data['ui'].to_s[/\A([a-z_]+)/, 1] || data['method']
+    remote = data['ui'].to_s[/\(([0-9a-fA-F.:]+)\)/, 1]
+    event.set('[source][ip]', remote) if !data['srcip'] && remote
+    event.set('[soc][fw][access][kind]', 'admin')
+    event.set('[soc][fw][access][user]', data['user'])
+    event.set('[soc][fw][access][channel]', channel) if channel
+    event.set('[event][category]', ['authentication'])
+    event.set('[event][type]', [action == 'login' ? 'start' : 'end'])
+    event.set('[event][outcome]', ok ? 'success' : 'failure')
+    event.set('[soc][fw][access][outcome]', ok ? 'success' : 'failure')
+    key = data['sn'] ? "admin|#{devid}|#{data['sn']}" : "admin|#{devid}|#{data['user']}|#{data['ui']}"
+    if ok
+      event.set('[soc][fw][session][id]', key)
+      event.set('[soc][fw][session][state]', action == 'login' ? 'open' : 'close')
+    end
+  elsif data['subtype'] == 'vpn'
+    tunnel = data['tunneltype'].to_s.downcase
+    kind = tunnel.start_with?('ssl') ? 'ssl' : (tunnel.include?('ipsec') || data['vpntunnel'] ? 'ipsec' : 'outro')
+    user = data['user'] || data['xauthuser']
+    failed = VPN_FAILURES.include?(action) || %w[failure failed].include?(status)
+    event.set('[soc][fw][access][kind]', 'vpn')
+    event.set('[soc][fw][access][channel]', kind)
+    event.set('[soc][fw][access][user]', user) if user
+    if failed || action == 'tunnel-up'
+      event.set('[soc][fw][access][outcome]', failed ? 'failure' : 'success')
+      event.set('[event][category]', ['authentication', 'network'])
+      event.set('[event][outcome]', failed ? 'failure' : 'success')
+    end
+    state = { 'tunnel-up' => 'open', 'tunnel-down' => 'close', 'tunnel-stats' => 'alive' }[action]
+    key = if data['tunnelid'] then "vpn|#{devid}|#{data['tunnelid']}"
+          elsif data['vpntunnel'] && data['remip'] then "vpn|#{devid}|#{data['vpntunnel']}|#{data['remip']}"
+          end
+    if state && key && !failed
+      event.set('[soc][fw][session][id]', key)
+      event.set('[soc][fw][session][state]', state)
+    end
+  end
 end
 
 def filter(event)
@@ -128,6 +182,7 @@ def filter(event)
     event.set('[event][category]', ['network'])
     event.set('[event][type]', ['connection', blocked ? 'denied' : 'allowed'])
   end
+  access(event, data)
   time = event_time(data)
   if time
     event.set('@timestamp', LogStash::Timestamp.new(time))
@@ -188,5 +243,40 @@ test 'aspas escapadas e valor numérico inválido' do
   expect('porta inválida ausente, nome sem barras') do |events|
     e = events[0]
     e.get('[source][port]').nil? && e.get('[rule][name]') == 'a "b" c' && e.get('[soc][fw][verdict]') == 'blocked'
+  end
+end
+
+test 'login de administrador: sucesso abre sessão pelo sn; falha não abre; logout fecha' do
+  in_event do
+    base = 'date=2026-10-27 time=10:00:00 tz="-0300" type="event" subtype="system" devid="FG1" logid="0100032001" '
+    [{ 'message' => base + 'action="login" status="success" user="admin" ui="https(10.0.0.5)" method="https" profile="super_admin" sn="1793"' },
+     { 'message' => base + 'action="login" status="failed" user="root" ui="ssh(203.0.113.9)" reason="name_invalid"' },
+     { 'message' => base + 'action="logout" status="success" user="admin" ui="https(10.0.0.5)" sn="1793"' }]
+  end
+  expect('classificação, origem e chave de sessão') do |events|
+    ok, bad, out = events
+    ok.get('[soc][fw][access][kind]') == 'admin' && ok.get('[soc][fw][access][channel]') == 'https' && ok.get('[source][ip]') == '10.0.0.5' &&
+      ok.get('[soc][fw][session][id]') == 'admin|FG1|1793' && ok.get('[soc][fw][session][state]') == 'open' && ok.get('[event][outcome]') == 'success' &&
+      bad.get('[soc][fw][access][outcome]') == 'failure' && bad.get('[soc][fw][session][id]').nil? && bad.get('[source][ip]') == '203.0.113.9' &&
+      bad.get('[soc][fw][access][user]') == 'root' && out.get('[soc][fw][session][state]') == 'close' && out.get('[soc][fw][session][id]') == 'admin|FG1|1793'
+  end
+end
+
+test 'VPN SSL e IPsec: túnel abre e fecha pelo tunnelid; falha de login não vira sessão' do
+  in_event do
+    base = 'date=2026-10-27 time=11:00:00 tz="-0300" type="event" subtype="vpn" devid="FG1" '
+    [{ 'message' => base + 'action="tunnel-up" tunneltype="ssl-tunnel" tunnelid=77 remip=198.51.100.7 tunnelip=10.212.134.200 user="maria"' },
+     { 'message' => base + 'action="tunnel-down" tunneltype="ssl-tunnel" tunnelid=77 remip=198.51.100.7 user="maria" duration=3600 sentbyte=10 rcvdbyte=20' },
+     { 'message' => base + 'action="ssl-login-fail" tunneltype="ssl-web" remip=198.51.100.8 user="joao" reason="sslvpn_login_permission_denied"' },
+     { 'message' => base + 'action="tunnel-up" tunneltype="ipsec" vpntunnel="FILIAL" remip=198.51.100.9 xauthuser="pedro"' }]
+  end
+  expect('estado, tipo e usuário') do |events|
+    up, down, fail, ipsec = events
+    up.get('[soc][fw][session][id]') == 'vpn|FG1|77' && up.get('[soc][fw][session][state]') == 'open' && up.get('[soc][fw][access][channel]') == 'ssl' &&
+      up.get('[fortinet][firewall][tunnelip]') == '10.212.134.200' && up.get('[soc][fw][access][outcome]') == 'success' &&
+      down.get('[soc][fw][session][state]') == 'close' && down.get('[event][duration]') == 3_600_000_000_000 &&
+      fail.get('[soc][fw][access][outcome]') == 'failure' && fail.get('[soc][fw][session][id]').nil? && fail.get('[source][ip]') == '198.51.100.8' &&
+      ipsec.get('[soc][fw][access][channel]') == 'ipsec' && ipsec.get('[soc][fw][access][user]') == 'pedro' &&
+      ipsec.get('[soc][fw][session][id]') == 'vpn|FG1|FILIAL|198.51.100.9'
   end
 end

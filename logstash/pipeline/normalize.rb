@@ -294,6 +294,23 @@ def filter(event)
     return [event]
   end
 
+  if entity == 'fwsession'
+    # Estado atual de uma sessão de VPN ou de administração (collector/src/sources/fwsessions.ts).
+    computed = present(data['computed_at'])
+    return [] unless dataset == 'state' && present(data['session_id']) && computed && present(data['schema_version'])
+    data.each { |key, value| event.set("[#{key}]", value) unless key == '@timestamp' || value.nil? }
+    event.remove('defender')
+    event.set('@timestamp', LogStash::Timestamp.new(Time.iso8601(data['@timestamp']))) if present(data['@timestamp'])
+    event.set('[event][kind]', 'state')
+    event.set('[event][module]', 'soc')
+    event.set('[event][dataset]', 'soc.fw_sessions')
+    event.set('[event][ingested]', LogStash::Timestamp.now)
+    event.set('[@metadata][doc_id]', data['session_id'])
+    event.set('[@metadata][index]', 'soc-fw-sessions')
+    event.set('[@metadata][version]', (Time.iso8601(computed).to_r * 1000).to_i.to_s)
+    return [event]
+  end
+
   if entity == 'fwflow'
     # Agregado por hora do tráfego da firewall (collector/src/sources/fwflows.ts).
     # ID estável hora|tipo|chave; versão = cálculo, para o recálculo substituir o anterior.
@@ -842,6 +859,22 @@ test 'agregado da firewall: índice mensal, ID estável e versão do cálculo' d
     events.length == 1 && e.get('[@metadata][index]') == 'soc-fw-flows-2026.10' && e.get('[@metadata][doc_id]') == 'f1' &&
       e.get('[@metadata][version]') == '1793110800000' && e.get('[soc][fw][verdict]') == 'blocked' && e.get('[fw][sessions]') == 12 &&
       e.get('[source][ip]') == '172.20.15.99' && e.get('defender').nil?
+  end
+end
+
+test 'sessão da firewall: estado atual por session_id com versão do cálculo' do
+  parameters { { 'identities_path' => '/usr/share/logstash/pipeline/normalize-test-identities.json' } }
+  in_event do
+    doc = { '@timestamp' => '2026-10-27T13:00:00.000Z', 'schema_version' => '1.0', 'session_id' => 'vpn|FG1|77', 'kind' => 'vpn',
+      'state' => 'open', 'computed_at' => '2026-10-27T14:20:00.000Z', 'user' => 'maria' }
+    [ { 'soc' => { 'entity' => 'fwsession', 'dataset' => 'state' }, 'defender' => doc },
+      { 'soc' => { 'entity' => 'fwsession', 'dataset' => 'state' }, 'defender' => { 'kind' => 'vpn' } } ]
+  end
+  expect('um documento em soc-fw-sessions; incompleto descartado') do |events|
+    e = events[0]
+    events.length == 1 && e.get('[@metadata][index]') == 'soc-fw-sessions' && e.get('[@metadata][doc_id]') == 'vpn|FG1|77' &&
+      e.get('[@metadata][version]') == '1793110800000' && e.get('[state]') == 'open' && e.get('[user]') == 'maria' &&
+      e.get('@timestamp').to_i == Time.iso8601('2026-10-27T13:00:00Z').to_i
   end
 end
 

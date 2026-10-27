@@ -13,6 +13,7 @@ import { collectInsights } from './sources/insights.js';
 import { collectMsrc } from './sources/msrc.js';
 import { collectWinUpdates } from './sources/winupdates.js';
 import { collectFwFlows } from './sources/fwflows.js';
+import { collectFwSessions } from './sources/fwsessions.js';
 import { ElasticClient, type ElasticSearcher } from './elastic/client.js';
 import type { RemediationCatalog } from './insights/catalog.js';
 import type { ExpectedAssetConfig } from './config.js';
@@ -40,6 +41,7 @@ async function runOnce(src: SourceConfig, deps: { pool: Pool; graph: GraphClient
     else if (src.type === 'msrc') await collectMsrc(src, deps, counters);
     else if (src.type === 'winupdates') await collectWinUpdates(src, deps, counters);
     else if (src.type === 'fwflows') await collectFwFlows(src, deps, counters);
+    else if (src.type === 'fwsessions') await collectFwSessions(src, deps, counters);
     else await collectObjects(src, deps, counters);
     await finishRun(deps.pool, runId, counters);
     deps.log.info({ source: src.name, ms: Date.now() - started, ...counters }, 'coleta concluída');
