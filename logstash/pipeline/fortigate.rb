@@ -138,6 +138,25 @@ def access(event, data)
   end
 end
 
+# SD-WAN: health-check de cada link (logids 22931/22933) muda entre alive e dead. A chave
+# sdwan|devid|interface|healthcheck vira um estado (up/down) no coletor (fwsessions).
+SDWAN_STATES = { 'alive' => 'up', 'dead' => 'down' }.freeze
+
+def sdwan(event, data)
+  return unless data['type'] == 'event' && data['subtype'] == 'sdwan'
+  state = SDWAN_STATES[data['newvalue'].to_s.downcase]
+  return unless state && data['interface']
+  event.set('[soc][fw][sdwan][interface]', data['interface'])
+  event.set('[soc][fw][sdwan][healthcheck]', data['healthcheck']) if data['healthcheck']
+  event.set('[soc][fw][sdwan][state]', state)
+  previous = SDWAN_STATES[data['oldvalue'].to_s.downcase]
+  event.set('[soc][fw][sdwan][previous]', previous) if previous
+  event.set('[event][category]', ['network'])
+  event.set('[event][type]', ['change'])
+  event.set('[soc][fw][session][id]', "sdwan|#{data['devid']}|#{data['interface']}|#{data['healthcheck']}")
+  event.set('[soc][fw][session][state]', state)
+end
+
 def filter(event)
   message = event.get('message').to_s.sub(/\A\s*<\d{1,3}>/, '')
   data = parse_kv(message)
@@ -191,6 +210,7 @@ def filter(event)
     event.set('[event][type]', ['connection', blocked ? 'denied' : 'allowed'])
   end
   access(event, data)
+  sdwan(event, data)
   if %w[event utm].include?(type)
     raw = data.reject { |k, v| RAW_SKIP.include?(k) || v.length > 1024 }
     event.set('[fortinet][raw]', raw) unless raw.empty?
@@ -310,5 +330,19 @@ test 'IPS: ataque bloqueado com severidade; UTM sem ameaça é descartado; event
       ips.get('[fortinet][firewall][attack]') == 'Apache.Log4j.Error.Log.Remote.Code.Execution' && ips.get('[event][dataset]') == 'fortigate.utm' &&
       sdwan.get('[fortinet][raw][interface]') == 'VLAN-1001' && sdwan.get('[fortinet][raw][healthcheck]') == 'HC_GOOGLE' &&
       sdwan.get('[fortinet][raw][eventtime]').nil? && sdwan.get('[fortinet][raw][date]').nil?
+  end
+end
+
+test 'SD-WAN: health-check alive/dead vira estado do link por interface' do
+  in_event do
+    base = 'date=2026-10-28 time=15:51:32 tz="-0300" type="event" subtype="sdwan" devid="FG1" eventtype="Health Check" '
+    [{ 'message' => base + 'logid="0113022931" healthcheck="Default_DNS" interface="VLAN-1001" oldvalue="alive" newvalue="dead" msg="SD-WAN health-check member changed state."' },
+     { 'message' => base + 'logid="0113022923" healthcheck="PING" member="2" msg="Member status changed. Member out-of-sla."' }]
+  end
+  expect('queda com chave e estado; aviso de SLA sem estado') do |events|
+    down, sla = events
+    down.get('[soc][fw][sdwan][state]') == 'down' && down.get('[soc][fw][sdwan][previous]') == 'up' &&
+      down.get('[soc][fw][sdwan][interface]') == 'VLAN-1001' && down.get('[soc][fw][session][id]') == 'sdwan|FG1|VLAN-1001|Default_DNS' &&
+      down.get('[soc][fw][session][state]') == 'down' && sla.get('[soc][fw][sdwan][state]').nil? && sla.get('[soc][fw][session][id]').nil?
   end
 end

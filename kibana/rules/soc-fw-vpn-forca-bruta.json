@@ -1,0 +1,61 @@
+{
+  "risk_score": 73,
+  "severity": "high",
+  "enabled": true,
+  "author": [
+    "SOC Usina Cerradão"
+  ],
+  "license": "",
+  "references": [],
+  "max_signals": 100,
+  "version": 2,
+  "actions": [],
+  "exceptions_list": [],
+  "language": "kuery",
+  "index": [
+    "fw-logs-*"
+  ],
+  "timestamp_override": "event.ingested",
+  "timestamp_override_fallback_disabled": false,
+  "rule_id": "soc-fw-vpn-forca-bruta",
+  "name": "SOC - Firewall: pico de falhas de login na VPN (força bruta)",
+  "description": "10 ou mais falhas de login na VPN SSL da mesma origem em 15 minutos. Indica tentativa de força bruta ou credencial errada gravada em um cliente.",
+  "type": "threshold",
+  "interval": "5m",
+  "from": "now-15m",
+  "tags": [
+    "SOC",
+    "SOC-observacao",
+    "Firewall",
+    "VPN",
+    "Forca bruta"
+  ],
+  "false_positives": [
+    "Usuário com senha expirada e FortiClient tentando reconectar sozinho."
+  ],
+  "threat": [
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0006",
+        "name": "Credential Access",
+        "reference": "https://attack.mitre.org/tactics/TA0006/"
+      },
+      "technique": [
+        {
+          "id": "T1110",
+          "name": "Brute Force",
+          "reference": "https://attack.mitre.org/techniques/T1110/"
+        }
+      ]
+    }
+  ],
+  "note": "## Triagem\n- Veja as contas tentadas (soc.fw.access.user) e o motivo (fortinet.firewall.reason).\n- Muitas contas da mesma origem = spraying; considere bloquear a origem no FortiGate.\n- Confira se houve tunnel-up com sucesso da mesma origem depois das falhas.",
+  "query": "event.dataset : \"fortigate.event\" and event.action : \"ssl-login-fail\" and source.ip : *",
+  "threshold": {
+    "field": [
+      "source.ip"
+    ],
+    "value": 10
+  }
+}

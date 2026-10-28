@@ -7,14 +7,16 @@ import { hashPayload } from '../util.js';
 const HOUR = 3_600_000;
 export const SCHEMA_VERSION = '1.0';
 
-export type SessionState = 'open' | 'closed' | 'stale' | 'unknown';
+export type SessionState = 'open' | 'closed' | 'stale' | 'unknown' | 'up' | 'down';
 export const STATE_LABEL: Record<SessionState, string> = {
   open: 'Aberta', closed: 'Encerrada', stale: 'Sem fechamento registrado', unknown: 'Sem registro recente',
+  up: 'Ativo', down: 'Caído',
 };
 
 /** Campos lidos do último evento (e do último evento de abertura) de cada sessão. */
 const SOURCE_FIELDS = ['@timestamp', 'event.duration', 'soc.fw.session.state', 'soc.fw.access.kind', 'soc.fw.access.channel', 'soc.fw.access.user',
-  'source.ip', 'source.bytes', 'destination.bytes', 'fortinet.firewall.tunnelip', 'fortinet.firewall.vpntunnel', 'fortinet.firewall.profile'];
+  'source.ip', 'source.bytes', 'destination.bytes', 'fortinet.firewall.tunnelip', 'fortinet.firewall.vpntunnel', 'fortinet.firewall.profile',
+  'soc.fw.sdwan.interface', 'soc.fw.sdwan.healthcheck'];
 
 export function sessionQuery(since: Date, now: Date, after?: Record<string, unknown>, size = 1000): Record<string, unknown> {
   const hit = (order: 'asc' | 'desc') => ({ top_hits: { size: 1, sort: [{ '@timestamp': { order } }], _source: { includes: SOURCE_FIELDS } } });
@@ -28,6 +30,8 @@ export function sessionQuery(since: Date, now: Date, after?: Record<string, unkn
       latest: hit('desc'),
       first: { min: { field: '@timestamp' } },
       opened: { filter: { term: { 'soc.fw.session.state': 'open' } }, aggs: { at: { max: { field: '@timestamp' } }, event: hit('desc') } },
+      // Links SD-WAN: horário da última queda (health-check dead).
+      downs: { filter: { term: { 'soc.fw.session.state': 'down' } }, aggs: { at: { max: { field: '@timestamp' } } } },
     } } },
   };
 }
@@ -43,6 +47,7 @@ export interface SessionBucket {
   latest?: { hits: { hits: { _source: Source }[] } };
   first?: { value_as_string?: string; value: number | null };
   opened?: { doc_count: number; at?: { value: number | null }; event?: { hits: { hits: { _source: Source }[] } } };
+  downs?: { doc_count: number; at?: { value: number | null } };
 }
 
 export interface SessionDoc extends Record<string, unknown> {
@@ -58,9 +63,23 @@ export function toSession(b: SessionBucket, now: Date, src: Pick<FwSessionsSourc
   if (!latest) return null;
   const opening = b.opened?.event?.hits.hits[0]?._source;
   const pick = (path: string) => get(latest, path) ?? get(opening, path);
-  const kind = str(pick('soc.fw.access.kind')) ?? 'desconhecido';
+  const kind = str(pick('soc.fw.access.kind')) ?? (b.key.id.startsWith('sdwan|') ? 'sdwan' : 'desconhecido');
   const lastSeen = str(get(latest, '@timestamp'))!;
   const lastState = str(get(latest, 'soc.fw.session.state'));
+  if (kind === 'sdwan') {
+    // Link: vale o último estado do health-check; sem prazo de validade (link estável não gera log).
+    const state: SessionState = lastState === 'down' ? 'down' : 'up';
+    const lastDown = num(b.downs?.at?.value);
+    return {
+      schema_version: SCHEMA_VERSION, session_id: b.key.id, kind, state, state_label: STATE_LABEL[state], last_seen: lastSeen,
+      ...(str(get(latest, 'soc.fw.sdwan.interface')) ? { interface: get(latest, 'soc.fw.sdwan.interface') } : {}),
+      ...(str(get(latest, 'soc.fw.sdwan.healthcheck')) ? { healthcheck: get(latest, 'soc.fw.sdwan.healthcheck') } : {}),
+      ...(lastDown != null ? { last_down: new Date(lastDown).toISOString() } : {}),
+      // Há quanto tempo está no estado atual.
+      started_at: lastSeen,
+      duration_seconds: Math.max(0, Math.round((now.getTime() - Date.parse(lastSeen)) / 1000)),
+    };
+  }
   const openedAt = num(b.opened?.at?.value);
   // Sem o evento de abertura na janela (sessão anterior ao início da coleta), o tunnel-stats
   // e o tunnel-down trazem há quanto tempo o túnel está ativo (event.duration, em ns).
@@ -118,6 +137,7 @@ export async function storeSessions(client: Client, src: FwSessionsSourceConfig,
   const known = new Map((await client.query<{ session_id: string; content_hash: string; state: string; payload: SessionDoc }>(
     'SELECT session_id, content_hash, state, payload FROM soc.fw_session_state')).rows.map((r) => [r.session_id, r]));
   const seen = new Set(docs.map((d) => d.session_id));
+  // Links SD-WAN fora da janela mantêm o último estado conhecido.
   const expired = [...known.values()].filter((r) => !seen.has(r.session_id) && ['open', 'stale'].includes(r.state))
     .map((r) => ({ ...r.payload, state: 'unknown' as const, state_label: STATE_LABEL.unknown }));
   const changed = [...docs, ...expired].map((d) => ({ doc: d, hash: hashPayload(d) })).filter((x) => known.get(x.doc.session_id)?.content_hash !== x.hash);

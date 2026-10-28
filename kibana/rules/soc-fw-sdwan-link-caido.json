@@ -1,0 +1,40 @@
+{
+  "risk_score": 47,
+  "severity": "medium",
+  "enabled": true,
+  "author": [
+    "SOC Usina Cerradão"
+  ],
+  "license": "",
+  "references": [],
+  "max_signals": 100,
+  "version": 2,
+  "actions": [],
+  "exceptions_list": [],
+  "language": "kuery",
+  "index": [
+    "fw-logs-*"
+  ],
+  "timestamp_override": "event.ingested",
+  "timestamp_override_fallback_disabled": false,
+  "rule_id": "soc-fw-sdwan-link-caido",
+  "name": "SOC - Firewall: link de internet (SD-WAN) caiu",
+  "description": "Um health-check do SD-WAN passou de alive para dead: o link deixou de responder ao teste. Confira no painel SOC - Firewall: ameaças, VPN e links se voltou.",
+  "type": "query",
+  "interval": "5m",
+  "from": "now-10m",
+  "tags": [
+    "SOC",
+    "SOC-observacao",
+    "Firewall",
+    "SD-WAN",
+    "Disponibilidade"
+  ],
+  "false_positives": [
+    "Destino do health-check (DNS, ping) fora do ar sem queda real do link.",
+    "Manutenção programada da operadora."
+  ],
+  "threat": [],
+  "note": "## Triagem\n- soc.fw.sdwan.interface e soc.fw.sdwan.healthcheck identificam o link e o teste.\n- Quedas repetidas no mesmo link em pouco tempo indicam instabilidade da operadora.",
+  "query": "event.dataset : \"fortigate.event\" and soc.fw.sdwan.state : \"down\""
+}

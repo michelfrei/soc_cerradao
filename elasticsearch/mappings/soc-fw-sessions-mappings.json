@@ -77,6 +77,15 @@
           "type": "date"
         }
       }
+    },
+    "interface": {
+      "type": "keyword"
+    },
+    "healthcheck": {
+      "type": "keyword"
+    },
+    "last_down": {
+      "type": "date"
     }
   }
 }

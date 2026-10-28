@@ -315,7 +315,7 @@ const NAV_ITEMS = [
   ['soc-dashboard-processos-rede', 'Processos e conexões'], ['soc-dashboard-exposicao', 'Exposição e proteção'],
   ['soc-dashboard-acessos-servidores', 'Acessos aos servidores'], ['soc-dashboard-remediacao', 'Remediação'],
   ['soc-dashboard-windows-updates', 'Atualização do Windows'], ['soc-dashboard-firewall', 'Firewall'],
-  ['soc-dashboard-firewall-acessos', 'Firewall: acessos e VPN'],
+  ['soc-dashboard-firewall-acessos', 'Firewall: acessos e VPN'], ['soc-dashboard-firewall-seguranca', 'Firewall: ameaças e links'],
 ];
 const nav = () => markdown(NAV_ITEMS.map(([id, title]) => `[${title}](/s/soc/app/dashboards#/view/${id})`).join(' · ') +
   '\n\n**Escopo:** nome contém srv ou fisico, exclui note ou micro. Para correlacionar, filtre por **host.id** e **soc.identity.correlation_key**. ' +
@@ -801,6 +801,49 @@ const fwSearch = search('soc-search-firewall', 'Logs da firewall — sessões de
     'fortinet.firewall.utmaction', 'fortinet.firewall.catdesc', 'rule.name', 'soc.fw.verdict', 'network.bytes']);
 detailSearches.push(fwSearch);
 
+// Firewall: IPS, força bruta na VPN e links SD-WAN ------------------------------------------
+
+/** Mesma contagem limitada à última hora do período (Lens reducedTimeRange). */
+const lastHour = (c) => ({ ...c, reducedTimeRange: '1h' });
+const IPS = 'event.dataset : "fortigate.utm" and fortinet.firewall.subtype : "ips"';
+const IPS_BLOCKED = `${IPS} and soc.fw.verdict : "blocked"`;
+const CRITICAL = 'fortinet.firewall.severity : "critical"';
+const SSL_FAIL = 'event.dataset : "fortigate.event" and event.action : "ssl-login-fail"';
+const SDWAN = 'event.dataset : "fortigate.event" and soc.fw.sdwan.state : *';
+const fws = {
+  ipsBlocked: metric('soc-fws-ips-blocked', 'Ataques bloqueados pelo IPS', 'fw-logs', IPS_BLOCKED),
+  ipsCritical: metric('soc-fws-ips-critical', 'Críticos bloqueados', 'fw-logs', `${IPS_BLOCKED} and ${CRITICAL}`),
+  ipsCriticalHour: metric('soc-fws-ips-critical-hour', 'Ataques críticos na última hora (bloqueados ou não)', 'fw-logs', `${IPS} and ${CRITICAL}`,
+    lastHour(col.count('Ataques críticos na última hora (bloqueados ou não)'))),
+  ipsDetected: metric('soc-fws-ips-detected', 'Detectados sem bloqueio', 'fw-logs', `${IPS} and soc.fw.verdict : "allowed"`),
+  ipsTimeline: timeline('soc-fws-ips-timeline', 'Ataques no tempo por severidade', 'fw-logs', IPS, 'fortinet.firewall.severity', 'Severidade', 5),
+  ipsAttacks: ranking('soc-fws-ips-attacks', 'Assinaturas mais frequentes', 'fw-logs', IPS, 'fortinet.firewall.attack', 'Ataque', 15,
+    { field: 'fortinet.firewall.severity', label: 'Severidade' }),
+  ipsSources: table('soc-fws-ips-sources', 'Origens dos ataques — top 30', 'fw-logs', IPS, [
+    ['source.ip', 'Origem', 30], ['source.geo.country_name', 'País', 1], ['soc.fw.verdict', 'Veredito', 1],
+  ], [['sig', col.unique('fortinet.firewall.attack', 'Assinaturas distintas')]]),
+  ipsTargets: table('soc-fws-ips-targets', 'Alvos dos ataques — destino e porta', 'fw-logs', IPS, [
+    ['destination.ip', 'Destino', 30], ['destination.port', 'Porta', 3], ['fortinet.firewall.severity', 'Severidade', 1],
+  ]),
+  vpnFail: metric('soc-fws-vpn-fail', 'Falhas de login na VPN SSL', 'fw-logs', SSL_FAIL),
+  vpnFailHour: metric('soc-fws-vpn-fail-hour', 'Falhas na última hora', 'fw-logs', SSL_FAIL, lastHour(col.count('Falhas na última hora'))),
+  vpnFailSources: metric('soc-fws-vpn-fail-sources', 'Origens com falha', 'fw-logs', SSL_FAIL, col.unique('source.ip', 'Origens com falha')),
+  vpnNow: metric('soc-fws-vpn-now', 'Usuários conectados agora', 'soc-fw-sessions-state', 'kind : "vpn" and channel : "ssl" and state : "open"'),
+  vpnFailTimeline: timeline('soc-fws-vpn-fail-timeline', 'Falhas de login na VPN no tempo por motivo', 'fw-logs', SSL_FAIL, 'fortinet.firewall.reason', 'Motivo', 5),
+  vpnFailTable: table('soc-fws-vpn-fail-table', 'Falhas por origem — pico indica força bruta', 'fw-logs', SSL_FAIL, [
+    ['source.ip', 'Origem', 30], ['soc.fw.access.user', 'Conta tentada', 3], ['fortinet.firewall.reason', 'Motivo', 1],
+  ], [['acc', col.unique('soc.fw.access.user', 'Contas distintas')]]),
+  linksDown: metric('soc-fws-links-down', 'Links caídos agora', 'soc-fw-sessions-state', 'kind : "sdwan" and state : "down"'),
+  linksTotal: metric('soc-fws-links-total', 'Health-checks monitorados', 'soc-fw-sessions-state', 'kind : "sdwan"'),
+  linksTable: table('soc-fws-links-table', 'Links de internet (SD-WAN) — situação e última queda', 'soc-fw-sessions-state', 'kind : "sdwan"', [
+    ['interface', 'Link (interface)', 30], ['healthcheck', 'Health-check', 5], ['state_label', 'Situação', 1],
+  ], [['chg', col.max('last_seen', 'Última mudança', 'date')], ['down', col.max('last_down', 'Última queda', 'date')]], 'chg'),
+  linksTimeline: timeline('soc-fws-links-timeline', 'Mudanças de estado dos links no tempo', 'fw-logs', SDWAN, 'soc.fw.sdwan.state', 'Estado', 2),
+  linksDrops: ranking('soc-fws-links-drops', 'Quedas por link no período', 'fw-logs', `${SDWAN} and soc.fw.sdwan.state : "down"`,
+    'soc.fw.sdwan.interface', 'Link', 10, { field: 'soc.fw.sdwan.healthcheck', label: 'Health-check' }),
+};
+fws.linksTable.attributes.state.datasourceStates.formBased.layers[LAYER].columns.m.label = 'Documentos (1 por health-check)';
+
 // Firewall: acesso administrativo, VPN e sessões abertas ------------------------------------
 // soc.fw.access.user é a conta do FortiGate (local/LDAP), não a identidade canônica do Defender.
 
@@ -852,7 +895,7 @@ const fwaSearch = search('soc-search-firewall-acessos', 'Eventos de acesso — l
 detailSearches.push(fwaSearch);
 
 const lensObjects = [...Object.values(ov), ...Object.values(ac), ...Object.values(srv), ...Object.values(asr), ...Object.values(cap),
-  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv), ...Object.values(rem), ...Object.values(wu), ...Object.values(fw), ...Object.values(fwa)];
+  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv), ...Object.values(rem), ...Object.values(wu), ...Object.values(fw), ...Object.values(fwa), ...Object.values(fws)];
 const dashboards = [
   dashboard('soc-dashboard-overview', 'SOC - Visão operacional', known, [
     [nav(), 0, 0, 48, 5], [markdown(`**${known}** Os incidentes/alertas Defender abrangem o tenant; o escopo de servidores é aplicado aos eventos e ao inventário. Alertas Elastic são detecções executadas neste espaço SOC e obedecem ao período selecionado.`), 0, 5, 48, 5],
@@ -1038,6 +1081,31 @@ dashboards.push(dashboard('soc-dashboard-firewall-acessos', 'SOC - Firewall: ace
     [fwaSearch, 0, 124, 48, 22],
   ], 'now-7d', [
     ['soc.fw.access.user', 'Conta / usuário', 'fw-logs'], ['source.ip', 'Origem', 'fw-logs'], ['soc.fw.access.outcome', 'Resultado', 'fw-logs'],
+  ]));
+
+dashboards.push(dashboard('soc-dashboard-firewall-seguranca', 'SOC - Firewall: ameaças, VPN e links',
+  'Ataques bloqueados pelo IPS, falhas de login na VPN (força bruta) e situação dos links de internet (SD-WAN).', [
+    [nav(), 0, 0, 48, 5],
+    [markdown('**Ataques (IPS):** logs UTM do tipo ips. **Bloqueado** = ação dropped/blocked/reset; **detectado sem bloqueio** só foi registrado e merece ' +
+      'atenção maior. Os cartões de "última hora" contam a hora final do período selecionado. Alertas automáticos: ataque crítico (a cada 5 min), ' +
+      '10+ falhas de VPN da mesma origem em 15 min e queda de link — em **Alertas Elastic**.\n\n' +
+      '**Links:** cada health-check do SD-WAN (PING, DNS…) por interface; **Caído** = o teste mais recente deu dead. Estado atual sem corte pelo ' +
+      'seletor de tempo; um link estável não gera log, então a situação vale desde a última mudança.'), 0, 5, 48, 7],
+    [markdown('### Ataques bloqueados (IPS)'), 0, 12, 48, 3],
+    [fws.ipsBlocked, 0, 15, 12, 8], [fws.ipsCritical, 12, 15, 12, 8], [fws.ipsCriticalHour, 24, 15, 12, 8], [fws.ipsDetected, 36, 15, 12, 8],
+    [fws.ipsTimeline, 0, 23, 48, 13],
+    [fws.ipsAttacks, 0, 36, 24, 16], [fws.ipsSources, 24, 36, 24, 16],
+    [fws.ipsTargets, 0, 52, 48, 14],
+    [markdown('### Falhas de login na VPN'), 0, 66, 48, 3],
+    [fws.vpnFail, 0, 69, 12, 8], [fws.vpnFailHour, 12, 69, 12, 8], [fws.vpnFailSources, 24, 69, 12, 8], [fws.vpnNow, 36, 69, 12, 8],
+    [fws.vpnFailTimeline, 0, 77, 48, 13],
+    [fws.vpnFailTable, 0, 90, 48, 16],
+    [markdown('### Links de internet (SD-WAN)'), 0, 106, 48, 3],
+    [fws.linksDown, 0, 109, 24, 8], [fws.linksTotal, 24, 109, 24, 8],
+    [fws.linksTable, 0, 117, 48, 16],
+    [fws.linksTimeline, 0, 133, 24, 14], [fws.linksDrops, 24, 133, 24, 14],
+  ], 'now-24h', [
+    ['source.ip', 'Origem', 'fw-logs'], ['fortinet.firewall.severity', 'Severidade', 'fw-logs'],
   ]));
 
 // Regras de detecção ---------------------------------------------------------------------

@@ -1,0 +1,55 @@
+{
+  "risk_score": 73,
+  "severity": "high",
+  "enabled": true,
+  "author": [
+    "SOC Usina Cerradão"
+  ],
+  "license": "",
+  "references": [],
+  "max_signals": 100,
+  "version": 2,
+  "actions": [],
+  "exceptions_list": [],
+  "language": "kuery",
+  "index": [
+    "fw-logs-*"
+  ],
+  "timestamp_override": "event.ingested",
+  "timestamp_override_fallback_disabled": false,
+  "rule_id": "soc-fw-ips-critico",
+  "name": "SOC - Firewall: ataque crítico detectado pelo IPS",
+  "description": "O IPS do FortiGate registrou um ataque de severidade crítica (bloqueado ou não). Verifique a origem, o alvo e se o ataque foi bloqueado (soc.fw.verdict).",
+  "type": "query",
+  "interval": "5m",
+  "from": "now-10m",
+  "tags": [
+    "SOC",
+    "SOC-observacao",
+    "Firewall",
+    "IPS"
+  ],
+  "false_positives": [
+    "Assinatura genérica disparada por tráfego legítimo de aplicação interna.",
+    "Scanner de vulnerabilidade autorizado."
+  ],
+  "threat": [
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0001",
+        "name": "Initial Access",
+        "reference": "https://attack.mitre.org/tactics/TA0001/"
+      },
+      "technique": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "reference": "https://attack.mitre.org/techniques/T1190/"
+        }
+      ]
+    }
+  ],
+  "note": "## Triagem\n- fortinet.firewall.attack e attackid identificam a assinatura; source.ip e destination.ip, a origem e o alvo.\n- soc.fw.verdict = allowed significa que o IPS só detectou: confira o servidor de destino.\n- Várias assinaturas da mesma origem indicam varredura.",
+  "query": "event.dataset : \"fortigate.utm\" and fortinet.firewall.subtype : \"ips\" and fortinet.firewall.severity : \"critical\""
+}

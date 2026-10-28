@@ -39,8 +39,8 @@ test('all saved-object IDs and references resolve, including dashboard panel ref
   }
 });
 
-test('twelve dashboards have valid nonoverlapping panel layouts', () => {
-  assert.equal(dashboards.length, 12);
+test('thirteen dashboards have valid nonoverlapping panel layouts', () => {
+  assert.equal(dashboards.length, 13);
   for (const d of dashboards) {
     const panels = JSON.parse(d.attributes.panelsJSON);
     for (const [i, p] of panels.entries()) {
@@ -111,8 +111,17 @@ test('capacity evolution uses one last value per histogram bucket and matrix kee
 });
 
 test('rules remain observation-only v2 and protect canonical host/account correlation', () => {
-  assert.equal(rules.length, 8);
-  for (const r of rules) {
+  assert.equal(rules.length, 11);
+  const firewall = rules.filter((r) => r.tags.includes('Firewall'));
+  assert.deepEqual(firewall.map((r) => r.rule_id).sort(), ['soc-fw-ips-critico', 'soc-fw-sdwan-link-caido', 'soc-fw-vpn-forca-bruta']);
+  for (const r of firewall) {
+    assert.deepEqual(r.index, ['fw-logs-*']);
+    assert.deepEqual(r.actions, []);
+    assert.equal(r.version, 2);
+    assert.ok(r.tags.includes('SOC-observacao'));
+  }
+  assert.deepEqual(rules.find((r) => r.rule_id === 'soc-fw-vpn-forca-bruta').threshold, { field: ['source.ip'], value: 10 });
+  for (const r of rules.filter((r) => !r.tags.includes('Firewall'))) {
     assert.equal(r.version, 2);
     assert.deepEqual(r.actions, []);
     assert.equal(r.enabled, true);
@@ -301,4 +310,18 @@ test('firewall access dashboard: open sessions are timeless current state; acces
   }
   assert.match(get('soc-fwa-vpn-open').attributes.state.query.query, /channel : "ssl" and state : "open"/);
   assert.match(get('soc-fwa-ipsec-open').attributes.state.query.query, /channel : "ipsec" and state : "open"/);
+});
+
+test('firewall security dashboard: IPS and VPN counts on fw-logs, last-hour cards, links as timeless state', () => {
+  const d = get('soc-dashboard-firewall-seguranca');
+  for (const r of d.references.filter((r) => r.type === 'lens')) {
+    const o = get(r.id);
+    assert.ok(['fw-logs', 'soc-fw-sessions-state'].includes(o.references[0].id), o.id);
+  }
+  for (const id of ['soc-fws-ips-critical-hour', 'soc-fws-vpn-fail-hour']) {
+    assert.ok(columns(get(id)).some((c) => c.reducedTimeRange === '1h'), id);
+  }
+  assert.match(get('soc-fws-ips-blocked').attributes.state.query.query, /subtype : "ips" and soc\.fw\.verdict : "blocked"/);
+  assert.match(get('soc-fws-vpn-fail').attributes.state.query.query, /event\.action : "ssl-login-fail"/);
+  assert.match(get('soc-fws-links-down').attributes.state.query.query, /kind : "sdwan" and state : "down"/);
 });

@@ -42,6 +42,16 @@ describe('estado da sessão', () => {
     expect(d).toMatchObject({ channel: 'ipsec', vpn_tunnel: 'VPN_CROMAI_PRI' });
   });
 
+  it('SD-WAN: último health-check define ativo/caído e guarda a última queda', () => {
+    const up = { '@timestamp': '2026-10-27T14:30:00.000Z', soc: { fw: { session: { state: 'up' }, sdwan: { interface: 'VLAN-1001', healthcheck: 'PING' } } } };
+    const b = { ...bucket('sdwan|FG1|VLAN-1001|PING', up), downs: { doc_count: 1, at: { value: ms('2026-10-27T14:10:00.000Z') } } };
+    expect(toSession(b, now, opts)).toMatchObject({ kind: 'sdwan', state: 'up', state_label: 'Ativo', interface: 'VLAN-1001', healthcheck: 'PING',
+      last_down: '2026-10-27T14:10:00.000Z', duration_seconds: 1800 });
+    const down = { ...up, '@timestamp': '2026-10-20T14:30:00.000Z', soc: { fw: { session: { state: 'down' }, sdwan: up.soc.fw.sdwan } } };
+    // Sem prazo de validade: caído há dias continua caído.
+    expect(toSession(bucket('sdwan|FG1|VLAN-1001|PING', down), now, opts)?.state).toBe('down');
+  });
+
   it('fechamento usa o último evento; dados da abertura preenchem o que falta', () => {
     const down = { '@timestamp': '2026-10-27T14:00:00.000Z', soc: { fw: { session: { state: 'close' }, access: { kind: 'vpn' } } },
       source: { bytes: 10 }, destination: { bytes: 20 } };

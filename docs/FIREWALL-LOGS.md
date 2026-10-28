@@ -21,6 +21,8 @@ VM-Docker: syslog-relay (TLS, RFC 6587, só o IP do FortiAnalyzer)
 | Fonte `fwsessions.fortigate` | Coletor | A cada 5 min, monta o estado das sessões de VPN e de administração (últimos 7 dias de logs), grava em `soc.fw_session_state` e publica `soc-fw-sessions` |
 | Dashboard **SOC - Firewall** | Kibana | Bloqueios, políticas, entradas da internet, países, origens e fluxos dos servidores |
 | Dashboard **SOC - Firewall: acessos e VPN** | Kibana | Sessões abertas agora, logins administrativos (sucesso e falha) e conexões VPN |
+| Dashboard **SOC - Firewall: ameaças, VPN e links** | Kibana | Ataques bloqueados pelo IPS (críticos em destaque), falhas de login na VPN SSL e situação dos links SD-WAN |
+| Regras `soc-fw-ips-critico`, `soc-fw-vpn-forca-bruta`, `soc-fw-sdwan-link-caido` | Elastic Security | Alertas a cada 5 min: ataque crítico, 10+ falhas de VPN da mesma origem em 15 min, queda de link |
 
 ## Dimensionamento (amostra de 27/10/2026)
 
@@ -87,6 +89,19 @@ aqui. Se precisar, dá para consultar `get system session status` pelo fgt-gatew
 Para os painéis de acesso, o FortiAnalyzer precisa encaminhar os logs do tipo **event**
 (subtipos system e vpn), além de traffic.
 
+## IPS e links SD-WAN
+
+- **UTM:** a pipeline guarda só `ips`, `anomaly` e `virus`. Webfilter, app-ctrl e DNS são
+  descartados, porque já aparecem no tráfego (`catdesc`, `app`). Ataque **bloqueado** =
+  `soc.fw.verdict: blocked` (ação dropped/blocked/reset/clear_session).
+- **Campos brutos:** eventos e UTM guardam também todos os campos originais em
+  `fortinet.raw` (flattened), menos horários duplicados e identificadores internos.
+- **SD-WAN:** o health-check de cada link (logids 22931 e 22933) traz `interface`,
+  `healthcheck` e `oldvalue`→`newvalue` (alive/dead). Isso vira `soc.fw.sdwan.*` e um estado por
+  `interface|healthcheck` (up/down) em `soc-fw-sessions` (`kind: sdwan`), sem prazo de
+  validade: um link estável não gera log. O aviso "Member out-of-sla" (22923) traz só o número
+  do membro e fica em `fortinet.raw`.
+
 ## Dado pessoal (LGPD)
 
 Usuário, MAC e sites acessados identificam pessoas. Por isso:
@@ -119,13 +134,15 @@ editor, sem colar em chat:
 - `SOC_SYSLOG_IP=172.16.159.60` vai no certificado do relay.
 - `COLLECTOR_VERSION=0.5.0`.
 
-## 2. VM-PG: migrações 007 e 008
+## 2. VM-PG: migrações 007, 008 e 009
 
 ```bash
 sudo bash postgres/migrate.sh
 ```
 
-A 007 cria `soc.fw_flow_hourly` e a 008 cria `soc.fw_session_state`. As duas permitem as
+A 007 cria `soc.fw_flow_hourly`, a 008 cria `soc.fw_session_state` e a 009 aceita os
+estados `up`/`down` dos links SD-WAN nessa tabela. Aplique a 009 **antes** do coletor que
+calcula os links; sem ela, a fonte `fwsessions.fortigate` falha. As duas permitem as
 entidades `fwflow` e `fwsession` na publicação.
 
 ## 3. VM-Docker: certificado, Elasticsearch, Logstash, relay e coletor
@@ -172,8 +189,9 @@ sudo iptables -I DOCKER-USER -p tcp --dport 6514 ! -s <IP_DO_FAZ> -j DROP
 - **Name:** `soc-elastic`. **Remote Server Type:** Syslog.
 - **Server Address:** 172.16.159.60. **Server Port:** 6514. **Reliable Connection:** ligado.
 - **Device Filter:** o FortiGate `CERRADAO_FG100F`.
-- **Log Filters:** tipos **traffic** e **event**. O event traz os logins administrativos e a
-  VPN, usados no painel de acessos. UTM é opcional.
+- **Log Filters:** tipos **traffic**, **event** e **utm**, com a lógica OR. O event traz os
+  logins administrativos, a VPN e o SD-WAN; o utm traz o IPS. Pela CLI, cada tipo é uma
+  entrada em `config log-filter` (`set field type`, `set oper =`, `set value <tipo>`).
 
 O TLS (`fwd-secure`) só se liga pela CLI. Faça os ajustes na mesma entrada:
 
