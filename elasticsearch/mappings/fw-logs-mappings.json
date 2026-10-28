@@ -382,8 +382,18 @@
             },
             "tunnelip": {
               "type": "ip"
+            },
+            "attackid": {
+              "type": "keyword"
+            },
+            "crlevel": {
+              "type": "keyword"
             }
           }
+        },
+        "raw": {
+          "type": "flattened",
+          "ignore_above": 1024
         }
       }
     }

@@ -36,10 +36,17 @@ FIELDS = {
   'tunnelid' => '[fortinet][firewall][tunnelid]', 'tunnelip' => '[fortinet][firewall][tunnelip]',
   'vpntunnel' => '[fortinet][firewall][vpntunnel]', 'xauthuser' => '[fortinet][firewall][xauthuser]',
   'method' => '[fortinet][firewall][method]', 'sn' => '[fortinet][firewall][sn]',
+  'attackid' => '[fortinet][firewall][attackid]', 'crlevel' => '[fortinet][firewall][crlevel]',
 }.freeze
 
+# Eventos e UTM têm campos variados por subtipo (SD-WAN, IPS...): todos vão também para
+# fortinet.raw (flattened), menos horários duplicados e identificadores internos.
+RAW_SKIP = %w[date time eventtime tz itime dtime itime_t id logver euid epid dsteuid dstepid logflag utmref].freeze
+# UTM: só o que é ameaça. Webfilter/app-ctrl/DNS já aparecem no tráfego (catdesc, app).
+UTM_KEEP = %w[ips anomaly virus].freeze
+
 PROTOCOLS = { 1 => 'icmp', 6 => 'tcp', 17 => 'udp', 47 => 'gre', 50 => 'esp', 58 => 'ipv6-icmp', 132 => 'sctp' }.freeze
-BLOCKED_ACTIONS = %w[deny block blocked dropped drop reset].freeze
+BLOCKED_ACTIONS = %w[deny block blocked dropped drop reset clear_session].freeze
 UNKNOWN_COUNTRY = %w[reserved undefined].freeze
 
 def register(_params); end
@@ -136,6 +143,7 @@ def filter(event)
   data = parse_kv(message)
   type = data['type']
   return [] unless type && data['devid'] # não é log do FortiGate: descarta
+  return [] if type == 'utm' && !UTM_KEEP.include?(data['subtype'])
 
   event.remove('message')
   %w[host @version event].each { |f| event.remove(f) }
@@ -183,6 +191,10 @@ def filter(event)
     event.set('[event][type]', ['connection', blocked ? 'denied' : 'allowed'])
   end
   access(event, data)
+  if %w[event utm].include?(type)
+    raw = data.reject { |k, v| RAW_SKIP.include?(k) || v.length > 1024 }
+    event.set('[fortinet][raw]', raw) unless raw.empty?
+  end
   time = event_time(data)
   if time
     event.set('@timestamp', LogStash::Timestamp.new(time))
@@ -282,5 +294,21 @@ test 'VPN SSL e IPsec: túnel abre e fecha pelo tunnelid; falha de login não vi
       fail.get('[soc][fw][access][outcome]') == 'failure' && fail.get('[soc][fw][session][id]').nil? && fail.get('[source][ip]') == '198.51.100.8' &&
       ipsec.get('[soc][fw][access][channel]') == 'ipsec' && ipsec.get('[soc][fw][access][user]') == 'pedro' &&
       ipsec.get('[soc][fw][session][id]') == 'vpn|FG1|FILIAL|198.51.100.9'
+  end
+end
+
+test 'IPS: ataque bloqueado com severidade; UTM sem ameaça é descartado; evento guarda campos brutos' do
+  in_event do
+    base = 'date=2026-10-28 time=10:00:00 tz="-0300" devid="FG1" '
+    [{ 'message' => base + 'type="utm" subtype="ips" action="dropped" attack="Apache.Log4j.Error.Log.Remote.Code.Execution" attackid=51006 severity="critical" srcip=203.0.113.50 dstip=172.16.159.10 dstport=443 proto=6 crlevel="critical"' },
+     { 'message' => base + 'type="utm" subtype="webfilter" action="blocked" hostname="x.example"' },
+     { 'message' => base + 'type="event" subtype="sdwan" logid="0113022933" eventtype="Health Check" healthcheck="HC_GOOGLE" interface="VLAN-1001" msg="SD-WAN health-check member changed state."' }]
+  end
+  expect('IPS bloqueado, webfilter fora, SD-WAN com campos brutos') do |events|
+    ips, sdwan = events
+    events.size == 2 && ips.get('[soc][fw][verdict]') == 'blocked' && ips.get('[fortinet][firewall][severity]') == 'critical' &&
+      ips.get('[fortinet][firewall][attack]') == 'Apache.Log4j.Error.Log.Remote.Code.Execution' && ips.get('[event][dataset]') == 'fortigate.utm' &&
+      sdwan.get('[fortinet][raw][interface]') == 'VLAN-1001' && sdwan.get('[fortinet][raw][healthcheck]') == 'HC_GOOGLE' &&
+      sdwan.get('[fortinet][raw][eventtime]').nil? && sdwan.get('[fortinet][raw][date]').nil?
   end
 end
