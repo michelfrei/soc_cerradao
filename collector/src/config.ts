@@ -139,8 +139,9 @@ const FwSessionsSource = BaseSource.extend({
   type: z.literal('fwsessions'),
   intervalSeconds: z.number().int().min(60).default(300),
   index: z.string().regex(/^[a-z0-9_.*-]+$/).default('fw-logs-fortigate'),
-  // Janela consultada; não deve passar da retenção dos logs brutos (10 dias).
-  lookbackHours: z.number().int().min(1).max(720).default(168),
+  // Janela consultada a cada execução. Curta de propósito: o último evento de cada sessão é lido
+  // do disco (top_hits); 7 dias levavam mais de 60 s. O estado anterior fica no PostgreSQL.
+  lookbackHours: z.number().int().min(1).max(720).default(26),
   adminStaleHours: z.number().int().min(1).default(24),
   // A VPN SSL envia tunnel-stats a cada ~10 min: 2 h sem evento já indica túnel perdido sem log.
   vpnStaleHours: z.number().int().min(1).default(2),

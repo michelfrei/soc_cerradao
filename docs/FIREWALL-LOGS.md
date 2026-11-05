@@ -18,7 +18,7 @@ VM-Docker: syslog-relay (TLS, RFC 6587, só o IP do FortiAnalyzer)
 | `logstash/pipeline/fortigate.conf` + `fortigate.rb` | Logstash, porta 5514 só na rede interna | Interpreta chave=valor, converte para ECS, calcula `soc.fw.verdict` e `network.direction` e descarta campos redundantes |
 | `fw-logs-fortigate` | Elasticsearch | Data stream com mapeamento explícito, `best_compression`, rollover diário e exclusão após 10 dias (30 após ampliar o disco) |
 | Fonte `fwflows.fortigate` | Coletor | Agrega cada hora no Elasticsearch (por origem, e fluxos de/para 172.16.159.0/24), grava em `soc.fw_flow_hourly` (30 dias) e publica `soc-fw-flows-*` (395 dias) |
-| Fonte `fwsessions.fortigate` | Coletor | A cada 5 min, monta o estado das sessões de VPN e de administração (últimos 7 dias de logs), grava em `soc.fw_session_state` e publica `soc-fw-sessions` |
+| Fonte `fwsessions.fortigate` | Coletor | A cada 5 min, monta o estado das sessões de VPN e de administração (últimas 26 h de logs; o estado anterior fica no PostgreSQL), grava em `soc.fw_session_state` e publica `soc-fw-sessions` |
 | Dashboard **SOC - Firewall** | Kibana | Bloqueios, políticas, entradas da internet, países, origens e fluxos dos servidores |
 | Dashboard **SOC - Firewall: acessos e VPN** | Kibana | Sessões abertas agora, logins administrativos (sucesso e falha) e conexões VPN |
 | Dashboard **SOC - Firewall: ameaças, VPN e links** | Kibana | Ataques bloqueados pelo IPS (críticos em destaque), falhas de login na VPN SSL e situação dos links SD-WAN |
@@ -75,13 +75,14 @@ O Logstash marca os eventos de acesso (tipo `event`) com campos próprios:
 https/ssh/console (admin) ou ssl/ipsec (VPN).
 
 **Sessões abertas** são as que não têm fechamento. O coletor recalcula a cada 5 minutos os
-últimos 7 dias de logs; o painel não depende do seletor de tempo. Os estados:
+últimas 26 h de logs; o painel não depende do seletor de tempo. A janela é curta porque
+ler o último evento de cada sessão em 7 dias levava mais de 60 s no disco da VM. Os estados:
 - **open:** aberta e com evento dentro do limite. Sem o evento de abertura (sessão anterior à
   coleta), o início vem da duração informada no `tunnel-stats`.
 - **stale** (sem fechamento registrado): aberta há mais de 2 h (VPN; a VPN SSL envia `tunnel-stats`
   a cada ~10 min) ou 24 h (admin) sem evento novo. Pode ter caído sem log; confira no FortiGate.
 - **closed:** encerrada.
-- **unknown:** saiu da janela de 7 dias sem fechamento.
+- **unknown:** ficou 26 h sem nenhum evento e sem fechamento.
 
 O total de sessões de tráfego da firewall (tabela de sessões) não vem nos logs e não aparece
 aqui. Se precisar, dá para consultar `get system session status` pelo fgt-gateway.

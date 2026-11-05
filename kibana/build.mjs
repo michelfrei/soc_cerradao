@@ -1142,7 +1142,7 @@ dashboards.push(dashboard('soc-dashboard-firewall-acessos', 'SOC - Firewall: ace
   'Logins administrativos no FortiGate, conexões VPN e sessões abertas agora.', [
     [nav(), 0, 0, 48, 5],
     [markdown('**Sessões abertas agora** (sem corte pelo seletor de tempo): túneis VPN e logins administrativos sem fechamento registrado, ' +
-      'recalculados pelo coletor a cada 5 minutos a partir dos últimos 7 dias de logs. **Sem fechamento registrado** = aberta há mais de ' +
+      'recalculados pelo coletor a cada 5 minutos a partir das últimas 26 h de logs (o estado anterior fica guardado). **Sem fechamento registrado** = aberta há mais de ' +
       '2 h (VPN, que envia status a cada ~10 min) ou 24 h (administração) sem evento novo: pode ter caído sem log; confira no FortiGate. ' +
       'Quem já estava conectado antes da coleta aparece no primeiro status do túnel, com o início calculado pela duração informada. ' +
       'A tabela de sessões de tráfego da firewall não vem nos logs e não aparece aqui.\n\n' +
