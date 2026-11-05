@@ -72,9 +72,20 @@ export function createFramer(onMessage, { maxBytes = 65536, onOversize = () => {
   };
 }
 
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
+
+/** Texto da mensagem: UTF-8 quando válido; senão Latin-1 (o FortiAnalyzer manda acentos assim). */
+export function decode(message) {
+  try {
+    return strictUtf8.decode(message);
+  } catch {
+    return message.toString('latin1');
+  }
+}
+
 /** Uma linha para o Logstash: sem CR/LF internos e sem espaços nas pontas. */
 export function toLine(message) {
-  return `${message.toString('utf8').replace(/[\r\n\0]+/g, ' ').trim()}\n`;
+  return `${decode(message).replace(/[\r\n\0]+/g, ' ').trim()}\n`;
 }
 
 export function loadConfig(env = process.env) {

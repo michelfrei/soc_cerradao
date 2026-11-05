@@ -41,6 +41,11 @@ test('linha entregue ao Logstash sem quebras internas', () => {
   assert.equal(toLine(Buffer.from(' a\r\nb\n ')), 'a b\n');
 });
 
+test('acentos em UTF-8 e em Latin-1 chegam corretos', () => {
+  assert.equal(toLine(Buffer.from('name="Usuários"', 'utf8')), 'name="Usuários"\n');
+  assert.equal(toLine(Buffer.from('name="Usuários"', 'latin1')), 'name="Usuários"\n');
+});
+
 test('configuração exige IPs válidos na lista de origem', () => {
   assert.throws(() => loadConfig({ FW_SYSLOG_ALLOWED: '172.16.0.10,abc' }), /IP inválido/);
   assert.deepEqual(loadConfig({ FW_SYSLOG_ALLOWED: ' 127.0.0.1 ' }).allowed, ['127.0.0.1']);

@@ -212,7 +212,8 @@ def filter(event)
   access(event, data)
   sdwan(event, data)
   if %w[event utm].include?(type)
-    raw = data.reject { |k, v| RAW_SKIP.include?(k) || v.length > 1024 }
+    # Valores acima de 1 KB não são indexados (ignore_above), mas ficam no _source para leitura.
+    raw = data.reject { |k, _| RAW_SKIP.include?(k) }.transform_values { |v| v[0, 8192] }
     event.set('[fortinet][raw]', raw) unless raw.empty?
   end
   time = event_time(data)

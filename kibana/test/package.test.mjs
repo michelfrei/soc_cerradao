@@ -39,8 +39,8 @@ test('all saved-object IDs and references resolve, including dashboard panel ref
   }
 });
 
-test('thirteen dashboards have valid nonoverlapping panel layouts', () => {
-  assert.equal(dashboards.length, 13);
+test('fourteen dashboards have valid nonoverlapping panel layouts', () => {
+  assert.equal(dashboards.length, 14);
   for (const d of dashboards) {
     const panels = JSON.parse(d.attributes.panelsJSON);
     for (const [i, p] of panels.entries()) {
@@ -111,9 +111,9 @@ test('capacity evolution uses one last value per histogram bucket and matrix kee
 });
 
 test('rules remain observation-only v2 and protect canonical host/account correlation', () => {
-  assert.equal(rules.length, 11);
+  assert.equal(rules.length, 12);
   const firewall = rules.filter((r) => r.tags.includes('Firewall'));
-  assert.deepEqual(firewall.map((r) => r.rule_id).sort(), ['soc-fw-ips-critico', 'soc-fw-sdwan-link-caido', 'soc-fw-vpn-forca-bruta']);
+  assert.deepEqual(firewall.map((r) => r.rule_id).sort(), ['soc-fw-ips-critico', 'soc-fw-politica-excluida', 'soc-fw-sdwan-link-caido', 'soc-fw-vpn-forca-bruta']);
   for (const r of firewall) {
     assert.deepEqual(r.index, ['fw-logs-*']);
     assert.deepEqual(r.actions, []);
@@ -324,4 +324,19 @@ test('firewall security dashboard: IPS and VPN counts on fw-logs, last-hour card
   assert.match(get('soc-fws-ips-blocked').attributes.state.query.query, /subtype : "ips" and soc\.fw\.verdict : "blocked"/);
   assert.match(get('soc-fws-vpn-fail').attributes.state.query.query, /event\.action : "ssl-login-fail"/);
   assert.match(get('soc-fws-links-down').attributes.state.query.query, /kind : "sdwan" and state : "down"/);
+});
+
+test('firewall policy changes: runtime fields on fw-logs and HA copies excluded everywhere', () => {
+  const runtime = JSON.parse(get('fw-logs').attributes.runtimeFieldMap);
+  for (const f of ['fw_cfg_path', 'fw_cfg_object', 'fw_cfg_admin', 'fw_cfg_origin', 'fw_cfg_origin_ip', 'fw_cfg_name', 'fw_cfg_kind']) {
+    assert.ok(runtime[f]?.script?.source, f);
+  }
+  assert.equal(runtime.fw_cfg_origin_ip.type, 'ip');
+  const d = get('soc-dashboard-firewall-politicas');
+  for (const r of d.references.filter((r) => ['lens', 'search'].includes(r.type))) {
+    const o = get(r.id);
+    const query = o.type === 'lens' ? o.attributes.state.query.query : JSON.parse(o.attributes.kibanaSavedObjectMeta.searchSourceJSON).query.query;
+    assert.match(query, /not fortinet\.raw\.ui : "ha_daemon"/, o.id);
+  }
+  assert.match(rules.find((r) => r.rule_id === 'soc-fw-politica-excluida').query, /not fortinet\.raw\.ui : "ha_daemon"/);
 });

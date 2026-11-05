@@ -1,0 +1,61 @@
+{
+  "rule_id": "soc-fw-politica-excluida",
+  "name": "SOC - Firewall: política de firewall excluída",
+  "description": "Uma política de firewall foi excluída no FortiGate (Delete em firewall.policy). Confirme com quem administra a firewall se a mudança estava prevista.",
+  "type": "query",
+  "index": [
+    "fw-logs-*"
+  ],
+  "risk_score": 47,
+  "severity": "medium",
+  "interval": "5m",
+  "from": "now-10m",
+  "enabled": true,
+  "tags": [
+    "SOC",
+    "SOC-observacao",
+    "Firewall",
+    "Configuracao"
+  ],
+  "author": [
+    "SOC Usina Cerradão"
+  ],
+  "license": "",
+  "false_positives": [
+    "Mudança planejada pela equipe de TI ou pelo parceiro de suporte da firewall."
+  ],
+  "threat": [
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0005",
+        "name": "Defense Evasion",
+        "reference": "https://attack.mitre.org/tactics/TA0005/"
+      },
+      "technique": [
+        {
+          "id": "T1562",
+          "name": "Impair Defenses",
+          "reference": "https://attack.mitre.org/techniques/T1562/",
+          "subtechnique": [
+            {
+              "id": "T1562.004",
+              "name": "Disable or Modify System Firewall",
+              "reference": "https://attack.mitre.org/techniques/T1562/004/"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "references": [],
+  "max_signals": 100,
+  "version": 2,
+  "actions": [],
+  "exceptions_list": [],
+  "note": "## Triagem\n- fortinet.raw.cfgobj é o id da política; fortinet.raw.user e fortinet.raw.ui dizem quem e de onde.\n- Veja no painel SOC - Firewall: alterações de políticas o que mais a mesma conta mudou.\n- Para ver o conteúdo apagado, compare as revisões de configuração do FortiGate.",
+  "language": "kuery",
+  "query": "event.dataset : \"fortigate.event\" and fortinet.raw.cfgpath : \"firewall.policy\" and event.action : \"Delete\" and not fortinet.raw.ui : \"ha_daemon\"",
+  "timestamp_override": "event.ingested",
+  "timestamp_override_fallback_disabled": false
+}

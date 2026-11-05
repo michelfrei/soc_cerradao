@@ -35,6 +35,54 @@ const DATA_VIEWS = [
   { id: 'soc-fw-sessions-state', title: 'soc-fw-sessions', name: 'SOC - Firewall (sessões de VPN e administração)', timeless: true },
 ];
 
+// Campos calculados do fw-logs a partir de fortinet.raw (alterações de configuração do FortiGate):
+// valem para todo o histórico, sem reprocessar. fw_cfg_kind: manual = pessoa; ha = cópia no outro
+// FortiGate do cluster (ha_daemon).
+const FW_RUNTIME_FIELDS = {
+  "fw_cfg_path": {
+    "type": "keyword",
+    "script": {
+      "source": "def f = params._source.fortinet; if (f == null) return; def r = f.raw; if (r == null) return; def v = r['cfgpath']; if (v != null && v.toString().length() > 0) emit(v.toString());"
+    }
+  },
+  "fw_cfg_object": {
+    "type": "keyword",
+    "script": {
+      "source": "def f = params._source.fortinet; if (f == null) return; def r = f.raw; if (r == null) return; def v = r['cfgobj']; if (v != null && v.toString().length() > 0) emit(v.toString());"
+    }
+  },
+  "fw_cfg_admin": {
+    "type": "keyword",
+    "script": {
+      "source": "def f = params._source.fortinet; if (f == null) return; def r = f.raw; if (r == null) return; def v = r['user']; if (v != null && v.toString().length() > 0) emit(v.toString());"
+    }
+  },
+  "fw_cfg_origin": {
+    "type": "keyword",
+    "script": {
+      "source": "def f = params._source.fortinet; if (f == null) return; def r = f.raw; if (r == null) return; def v = r['ui']; if (v != null && v.toString().length() > 0) emit(v.toString());"
+    }
+  },
+  "fw_cfg_kind": {
+    "type": "keyword",
+    "script": {
+      "source": "def f = params._source.fortinet; if (f == null) return; def r = f.raw; if (r == null) return; if (r.cfgpath == null) return; emit(r.ui != null && r.ui.toString() == 'ha_daemon' ? 'ha' : 'manual');"
+    }
+  },
+  "fw_cfg_origin_ip": {
+    "type": "ip",
+    "script": {
+      "source": "def f = params._source.fortinet; if (f == null) return; def r = f.raw; if (r == null) return; def u = r.ui; if (u == null) return; String s = u.toString(); int a = s.indexOf('('); int b = s.indexOf(')', a + 1); if (a < 0 || b < 0) return; String ip = s.substring(a + 1, b); if (ip.indexOf('.') > 0 || ip.indexOf(':') > 0) emit(ip);"
+    }
+  },
+  "fw_cfg_name": {
+    "type": "keyword",
+    "script": {
+      "source": "def f = params._source.fortinet; if (f == null) return; def r = f.raw; if (r == null) return; def a = r.cfgattr; if (a == null) return; String s = a.toString(); int i = s.indexOf('name['); while (i > 0 && s.charAt(i - 1) != (char) ']') { i = s.indexOf('name[', i + 1); } if (i < 0) return; int j = s.indexOf(']', i); if (j < 0) return; String n = s.substring(i + 5, j); int k = n.indexOf('->'); if (k >= 0) n = n.substring(k + 2); if (n.length() > 0) emit(n);"
+    }
+  }
+};
+
 const dataViewObjects = DATA_VIEWS.map((d) => ({
   type: 'index-pattern',
   id: d.id,
@@ -43,7 +91,8 @@ const dataViewObjects = DATA_VIEWS.map((d) => ({
       'host.id': { id: 'url', params: { type: 'link', labelTemplate: '{{value}}',
         urlTemplate: `/s/soc/app/discover#/?_a=(index:'${d.id}',query:(language:kuery,query:'${d.id === 'soc-posture' ? 'soc.posture.active%20:%20true%20and%20' : ''}host.id%20:%20%22{{value}}%22'))`,
         openLinkInCurrentTab: false } },
-    }) } : {}) },
+    }) } : {}),
+    ...(d.id === 'fw-logs' ? { runtimeFieldMap: JSON.stringify(FW_RUNTIME_FIELDS) } : {}) },
   references: [],
   coreMigrationVersion: '8.8.0',
   typeMigrationVersion: '8.0.0',
@@ -60,7 +109,7 @@ const TERM_TYPES = {
   'source.ip': 'ip', 'destination.ip': 'ip',
   'soc.network.local_ip': 'ip', 'soc.network.remote_ip': 'ip',
   'soc.network.local_port': 'number', 'soc.network.remote_port': 'number',
-  'destination.port': 'number', 'tunnel_ip': 'ip',
+  'destination.port': 'number', 'tunnel_ip': 'ip', 'fw_cfg_origin_ip': 'ip',
 };
 
 const col = {
@@ -316,6 +365,7 @@ const NAV_ITEMS = [
   ['soc-dashboard-acessos-servidores', 'Acessos aos servidores'], ['soc-dashboard-remediacao', 'Remediação'],
   ['soc-dashboard-windows-updates', 'Atualização do Windows'], ['soc-dashboard-firewall', 'Firewall'],
   ['soc-dashboard-firewall-acessos', 'Firewall: acessos e VPN'], ['soc-dashboard-firewall-seguranca', 'Firewall: ameaças e links'],
+  ['soc-dashboard-firewall-politicas', 'Firewall: alterações de políticas'],
 ];
 const nav = () => markdown(NAV_ITEMS.map(([id, title]) => `[${title}](/s/soc/app/dashboards#/view/${id})`).join(' · ') +
   '\n\n**Escopo:** nome contém srv ou fisico, exclui note ou micro. Para correlacionar, filtre por **host.id** e **soc.identity.correlation_key**. ' +
@@ -801,6 +851,37 @@ const fwSearch = search('soc-search-firewall', 'Logs da firewall — sessões de
     'fortinet.firewall.utmaction', 'fortinet.firewall.catdesc', 'rule.name', 'soc.fw.verdict', 'network.bytes']);
 detailSearches.push(fwSearch);
 
+// Firewall: alterações nas políticas (Policy & Objects → Firewall Policy) --------------------
+
+const POL = 'event.dataset : "fortigate.event" and fortinet.raw.cfgpath : "firewall.policy" and not fortinet.raw.ui : "ha_daemon"';
+const CFG_OTHER = 'event.dataset : "fortigate.event" and fortinet.raw.cfgpath : * and not fortinet.raw.cfgpath : "firewall.policy" and not fortinet.raw.ui : "ha_daemon"';
+const fwp = {
+  total: metric('soc-fwp-total', 'Alterações em políticas', 'fw-logs', POL),
+  deleted: metric('soc-fwp-deleted', 'Políticas excluídas', 'fw-logs', `${POL} and event.action : "Delete"`),
+  added: metric('soc-fwp-added', 'Políticas criadas', 'fw-logs', `${POL} and event.action : "Add"`),
+  edited: metric('soc-fwp-edited', 'Edições', 'fw-logs', `${POL} and event.action : "Edit"`),
+  admins: metric('soc-fwp-admins', 'Administradores que alteraram', 'fw-logs', POL, col.unique('fw_cfg_admin', 'Administradores que alteraram')),
+  timeline: timeline('soc-fwp-timeline', 'Alterações em políticas no tempo por ação', 'fw-logs', POL, 'event.action', 'Ação', 6),
+  who: table('soc-fwp-who', 'Quem alterou — conta, origem e acesso', 'fw-logs', POL, [
+    ['fw_cfg_admin', 'Conta', 20], ['fw_cfg_origin_ip', 'IP de origem', 5], ['event.action', 'Ação', 6],
+  ], [['last', col.max('@timestamp', 'Última alteração', 'date')]]),
+  deletedTable: table('soc-fwp-deleted-table', 'Políticas excluídas — id, quem e quando', 'fw-logs', `${POL} and event.action : "Delete"`, [
+    ['fw_cfg_object', 'Política (id)', 50], ['fw_cfg_admin', 'Conta', 1], ['fw_cfg_origin_ip', 'IP de origem', 1],
+  ], [['when', col.max('@timestamp', 'Quando', 'date')]], 'when'),
+  mostChanged: ranking('soc-fwp-most-changed', 'Políticas mais alteradas (id)', 'fw-logs', POL, 'fw_cfg_object', 'Política (id)', 15,
+    { field: 'event.action', label: 'Ação' }),
+  names: table('soc-fwp-names', 'Políticas alteradas por nome — criadas ou renomeadas', 'fw-logs', `${POL} and fw_cfg_name : *`, [
+    ['fw_cfg_name', 'Nome', 50], ['fw_cfg_object', 'Política (id)', 1], ['fw_cfg_admin', 'Conta', 1],
+  ], [['when', col.max('@timestamp', 'Última alteração', 'date')]], 'when'),
+  other: table('soc-fwp-other', 'Outras alterações de configuração — objeto e ação', 'fw-logs', CFG_OTHER, [
+    ['fw_cfg_path', 'Configuração', 30], ['event.action', 'Ação', 6], ['fw_cfg_admin', 'Conta', 3],
+  ], [['when', col.max('@timestamp', 'Última alteração', 'date')]], 'when'),
+};
+const fwpSearch = search('soc-search-firewall-politicas', 'Alterações de configuração — antes e depois (cfgattr)', 'fw-logs',
+  'event.dataset : "fortigate.event" and fortinet.raw.cfgpath : * and not fortinet.raw.ui : "ha_daemon"',
+  ['event.action', 'fw_cfg_admin', 'fw_cfg_origin', 'fw_cfg_path', 'fw_cfg_object', 'fw_cfg_name', 'fortinet.raw.cfgattr', 'message']);
+detailSearches.push(fwpSearch);
+
 // Firewall: IPS, força bruta na VPN e links SD-WAN ------------------------------------------
 
 /** Mesma contagem limitada à última hora do período (Lens reducedTimeRange). */
@@ -895,7 +976,7 @@ const fwaSearch = search('soc-search-firewall-acessos', 'Eventos de acesso — l
 detailSearches.push(fwaSearch);
 
 const lensObjects = [...Object.values(ov), ...Object.values(ac), ...Object.values(srv), ...Object.values(asr), ...Object.values(cap),
-  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv), ...Object.values(rem), ...Object.values(wu), ...Object.values(fw), ...Object.values(fwa), ...Object.values(fws)];
+  ...Object.values(pr), ...Object.values(posture), ...Object.values(asv), ...Object.values(rem), ...Object.values(wu), ...Object.values(fw), ...Object.values(fwa), ...Object.values(fws), ...Object.values(fwp)];
 const dashboards = [
   dashboard('soc-dashboard-overview', 'SOC - Visão operacional', known, [
     [nav(), 0, 0, 48, 5], [markdown(`**${known}** Os incidentes/alertas Defender abrangem o tenant; o escopo de servidores é aplicado aos eventos e ao inventário. Alertas Elastic são detecções executadas neste espaço SOC e obedecem ao período selecionado.`), 0, 5, 48, 5],
@@ -1106,6 +1187,25 @@ dashboards.push(dashboard('soc-dashboard-firewall-seguranca', 'SOC - Firewall: a
     [fws.linksTimeline, 0, 133, 24, 14], [fws.linksDrops, 24, 133, 24, 14],
   ], 'now-24h', [
     ['source.ip', 'Origem', 'fw-logs'], ['fortinet.firewall.severity', 'Severidade', 'fw-logs'],
+  ]));
+
+dashboards.push(dashboard('soc-dashboard-firewall-politicas', 'SOC - Firewall: alterações de políticas',
+  'Quem criou, editou, moveu ou excluiu políticas de firewall no FortiGate, de onde e quando.', [
+    [nav(), 0, 0, 48, 5],
+    [markdown('**Fonte:** logs de configuração do FortiGate (Object attribute configured), desde que o FortiAnalyzer passou a encaminhar eventos. ' +
+      'O FortiGate está em **HA**: cada alteração também aparece como cópia no outro equipamento (`ha_daemon`), que esta tela **não conta**. ' +
+      '**Move** só muda a ordem; **Edit** com interface nova faz a política mudar de seção na tela de políticas e parecer que sumiu.\n\n' +
+      '**Excluída** mostra só o id: o FortiGate não registra o conteúdo apagado. Para recuperar, use as revisões de configuração ' +
+      '(System → Configuration → Revisions). A tabela detalhada no final traz o antes e depois de cada atributo (`cfgattr`). ' +
+      'Alerta automático: política excluída (a cada 5 min), em **Alertas Elastic**.'), 0, 5, 48, 8],
+    [fwp.total, 0, 13, 10, 8], [fwp.deleted, 10, 13, 10, 8], [fwp.added, 20, 13, 9, 8], [fwp.edited, 29, 13, 9, 8], [fwp.admins, 38, 13, 10, 8],
+    [fwp.timeline, 0, 21, 48, 13],
+    [fwp.who, 0, 34, 24, 15], [fwp.deletedTable, 24, 34, 24, 15],
+    [fwp.names, 0, 49, 24, 18], [fwp.mostChanged, 24, 49, 24, 18],
+    [fwpSearch, 0, 67, 48, 24],
+    [fwp.other, 0, 91, 48, 15],
+  ], 'now-30d', [
+    ['event.action', 'Ação', 'fw-logs'],
   ]));
 
 // Regras de detecção ---------------------------------------------------------------------
